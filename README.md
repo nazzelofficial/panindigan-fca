@@ -476,7 +476,7 @@ pnpm run dev
 
 If you discover a security vulnerability, please **DO NOT** open a public issue. Instead:
 
-1. Email: **security@panindigan.dev** (if available) or
+1. Email: **security@panindigan.com** (if available) or
 2. Open a private security advisory on GitHub
 3. Include detailed steps to reproduce
 
@@ -512,7 +512,7 @@ This project is licensed under the **MIT License** - see the [LICENSE.md](LICENS
 ```
 MIT License
 
-Copyright (c) 2024-2025 Panindigan Team
+Copyright (c) 2026 Nazzel Development
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -531,8 +531,8 @@ in the Software without restriction...
 
 ## 📞 Support & Community
 
-- 🌐 **Website**: [panindigan.com](https://panindigan.com)
-- 👤 **Developer**: [nazzelofficial.com](https://nazzelofficial.com)
+- 🌐 **Website**: [panindigan.com](https://www.panindigan.com)
+- 👤 **Developer**: [nazzelofficial.com](https://www.nazzelofficial.com)
 - 🐛 **Issues**: [GitHub Issues](https://github.com/nazzelofficial/panindigan-fca/issues)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/nazzelofficial/panindigan-fca/discussions)
 - 📧 **Email**: support@panindigan.com
