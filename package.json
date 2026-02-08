@@ -1,24 +1,33 @@
 {
   "name": "panindigan-fca",
   "version": "1.4.0",
-  "description": "A robust, type-safe, and feature-rich library for interacting with Facebook Messenger.",
+  "description": "A robust, type-safe, and feature-rich library for interacting with Facebook Messenger programmatically",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "pnpm run build",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clean": "rm -rf dist"
   },
   "keywords": [
     "facebook",
-    "chat",
-    "api",
-    "fca",
     "messenger",
+    "chat-api",
+    "fca",
+    "facebook-chat-api",
+    "bot",
+    "automation",
     "typescript",
-    "bot"
+    "mqtt",
+    "graphql",
+    "messenger-bot",
+    "facebook-automation"
   ],
   "repository": {
     "type": "git",
@@ -32,9 +41,12 @@
     "dist",
     "LICENSE.md",
     "README.md",
-    "CHANGE LOGS.md"
+    "CHANGELOG.md"
   ],
-  "author": "Panindigan Team",
+  "author": {
+    "name": "Panindigan Team",
+    "url": "https://github.com/nazzelofficial"
+  },
   "license": "MIT",
   "packageManager": "pnpm@10.28.2",
   "dependencies": {
