@@ -6,6 +6,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "pnpm run build",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -18,6 +19,20 @@
     "messenger",
     "typescript",
     "bot"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nazzelofficial/panindigan-fca.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nazzelofficial/panindigan-fca/issues"
+  },
+  "homepage": "https://github.com/nazzelofficial/panindigan-fca#readme",
+  "files": [
+    "dist",
+    "LICENSE.md",
+    "README.md",
+    "CHANGE LOGS.md"
   ],
   "author": "Panindigan Team",
   "license": "MIT",
