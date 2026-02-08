@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Enhanced Diagnostics**: Added timestamps, icons, and stack traces for better debugging.
 - **Centralized Logger**: Replaced `console.log` with a robust `Logger` class across all modules (`Client`, `CommandHandler`, `MQTT`, `Auth`).
 
+### 📚 Documentation & Examples
+- **Professional README**: Completely rewrote `README.md` with comprehensive feature lists, badges, and clear usage guides.
+- **Updated Examples**: Refactored `example.ts` to demonstrate environment variable usage and proper error handling.
+- **Type Definitions**: Enhanced `d.ts` files for better IntelliSense support.
+
 ## [1.3.0] - 2026-02-08
 
 ### ⚡ MQTT Full Implementation & Security Hardening
