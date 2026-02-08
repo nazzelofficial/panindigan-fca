@@ -1,0 +1,15 @@
+import { AxiosRequestConfig, AxiosResponse } from 'axios';
+import { AppState, AntiDetectionOptions } from '../types';
+export declare class Request {
+    private _jar;
+    private _instance;
+    private _defaultHeaders;
+    private _antiDetection;
+    private _uaRotator;
+    private _fingerprintMgr;
+    constructor(appState?: AppState[], antiDetection?: AntiDetectionOptions);
+    getJar(): AppState[];
+    setJar(jar: AppState[]): void;
+    get(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse>;
+    post(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse>;
+}
