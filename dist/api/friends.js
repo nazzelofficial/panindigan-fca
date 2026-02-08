@@ -3,8 +3,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.addFriend = addFriend;
 exports.cancelFriendRequest = cancelFriendRequest;
 exports.removeFriend = removeFriend;
+exports.acceptFriendRequest = acceptFriendRequest;
+exports.deleteFriendRequest = deleteFriendRequest;
 exports.getFriendsList = getFriendsList;
 const utils_1 = require("../utils/utils");
+const constants_1 = require("../utils/constants");
 async function addFriend(ctx, userId) {
     const form = {
         fb_dtsg: ctx.fb_dtsg,
@@ -33,6 +36,24 @@ async function removeFriend(ctx, userId) {
     };
     await ctx.req.post('/ajax/profile/remove_friend.php', form);
 }
+async function acceptFriendRequest(ctx, userId) {
+    const form = {
+        fb_dtsg: ctx.fb_dtsg,
+        jazoest: ctx.ttstamp,
+        to_friend: userId,
+        action: 'confirm'
+    };
+    await ctx.req.post('/ajax/add_friend/action.php', form);
+}
+async function deleteFriendRequest(ctx, userId) {
+    const form = {
+        fb_dtsg: ctx.fb_dtsg,
+        jazoest: ctx.ttstamp,
+        request_id: userId,
+        action: 'delete'
+    };
+    await ctx.req.post('/ajax/friends/requests/delete.php', form);
+}
 async function getFriendsList(ctx) {
     // Use GraphQL for reliable friend list fetching
     const form = {
@@ -40,7 +61,7 @@ async function getFriendsList(ctx) {
         jazoest: ctx.ttstamp,
         queries: JSON.stringify({
             o0: {
-                doc_id: '10156903248383894', // Known docID for fetching friends
+                doc_id: constants_1.GRAPHQL_DOC_IDS.FRIENDS_LIST,
                 query_params: {
                     exclude_ids: [],
                     limit: 100,

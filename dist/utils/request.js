@@ -9,6 +9,9 @@ const constants_1 = require("./constants");
 const utils_1 = require("./utils");
 const UserAgentRotator_1 = require("./UserAgentRotator");
 const FingerprintManager_1 = require("./FingerprintManager");
+const BehavioralSimulator_1 = require("./BehavioralSimulator");
+const SecurityGuard_1 = require("./SecurityGuard");
+const PerformanceManager_1 = require("./PerformanceManager");
 class Request {
     constructor(appState, antiDetection) {
         this._jar = [];
@@ -17,20 +20,51 @@ class Request {
         this._defaultHeaders = { ...constants_1.HEADERS };
         this._uaRotator = new UserAgentRotator_1.UserAgentRotator();
         this._fingerprintMgr = new FingerprintManager_1.FingerprintManager();
+        this._behavioralSim = new BehavioralSimulator_1.BehavioralSimulator(antiDetection?.behavioralSimulation || { enable: false });
+        this._securityGuard = new SecurityGuard_1.SecurityGuard(antiDetection?.securityGuard || { enable: false });
+        this._perfMgr = PerformanceManager_1.PerformanceManager.getInstance();
         if (this._antiDetection?.fingerprint?.enable) {
             if (this._antiDetection.fingerprint.autoRotate) {
                 this._fingerprintMgr.startRotation(this._antiDetection.fingerprint.rotationInterval);
             }
         }
-        this._instance = axios_1.default.create({
+        const axiosConfig = {
             baseURL: constants_1.FACEBOOK_URL,
             withCredentials: true,
             headers: this._defaultHeaders,
-            validateStatus: () => true // Handle errors manually
-        });
+            validateStatus: () => true, // Handle errors manually
+            httpAgent: this._perfMgr.httpAgent,
+            httpsAgent: this._perfMgr.httpsAgent,
+            decompress: true // Enable automatic decompression
+        };
+        // Compression Header
+        this._defaultHeaders['Accept-Encoding'] = 'gzip, deflate, br';
+        // Proxy Configuration
+        if (this._antiDetection?.proxy?.enable && this._antiDetection.proxy.proxies?.length) {
+            const proxyUrl = this._antiDetection.proxy.proxies[Math.floor(Math.random() * this._antiDetection.proxy.proxies.length)];
+            try {
+                const url = new URL(proxyUrl);
+                axiosConfig.proxy = {
+                    protocol: url.protocol.replace(':', ''),
+                    host: url.hostname,
+                    port: parseInt(url.port),
+                    auth: (url.username && url.password) ? { username: url.username, password: url.password } : undefined
+                };
+            }
+            catch (e) {
+                console.warn('[Request] Invalid proxy URL provided:', proxyUrl);
+            }
+        }
+        this._instance = axios_1.default.create(axiosConfig);
         this._instance.interceptors.request.use(async (config) => {
-            // Anti-Detection: Random Delays
-            if (this._antiDetection?.enable && this._antiDetection.randomDelays) {
+            config.startTime = Date.now();
+            // Security Guard: Rate Limiting
+            await this._securityGuard.checkRateLimits();
+            // Anti-Detection: Behavioral Delays
+            if (this._antiDetection?.behavioralSimulation?.enable) {
+                await this._behavioralSim.simulateDelay('action');
+            }
+            else if (this._antiDetection?.enable && this._antiDetection.randomDelays) {
                 const delay = Math.floor(Math.random() * 400) + 100; // 100-500ms
                 await new Promise(resolve => setTimeout(resolve, delay));
             }
@@ -38,16 +72,10 @@ class Request {
             if (this._antiDetection?.enable && this._antiDetection.userAgentRotation) {
                 config.headers['User-Agent'] = this._uaRotator.getRandomUserAgent('Desktop');
             }
-            else if (this._antiDetection?.enable) {
-                // Even if rotation is off, ensure we have a valid UA (already in HEADERS but good to enforce)
-            }
-            // Fingerprint Injection (Simulated headers)
+            // Fingerprint Injection
             if (this._antiDetection?.fingerprint?.enable) {
-                const fp = this._fingerprintMgr.getFingerprint();
-                // Inject consistent timezone offset if needed (example custom header)
-                // config.headers['X-Timezone-Offset'] = fp.timezone.offset; 
-                // config.headers['X-Screen-Width'] = fp.screen.width;
-                // Note: Actual FB headers are more complex, but this maintains internal state consistency
+                const fpHeaders = this._fingerprintMgr.getSecurityHeaders();
+                config.headers = { ...config.headers, ...fpHeaders };
             }
             // Attach cookies
             const cookieHeader = (0, utils_1.formatCookie)(this._jar, config.url || constants_1.FACEBOOK_URL);
@@ -55,8 +83,25 @@ class Request {
                 config.headers['Cookie'] = cookieHeader;
             }
             return config;
+        }, error => {
+            // Record Error Metrics
+            const duration = Date.now() - (error.config?.startTime || Date.now());
+            this._perfMgr.recordRequest(duration, 0, 0, true);
+            return Promise.reject(error);
         });
-        this._instance.interceptors.response.use(response => {
+        this._instance.interceptors.response.use(async (response) => {
+            // Record Metrics
+            const duration = Date.now() - (response.config?.startTime || Date.now());
+            const bytesIn = parseInt(response.headers['content-length'] || '0');
+            const bytesOut = 0; // Approx, hard to get exact from axios
+            this._perfMgr.recordRequest(duration, bytesIn, bytesOut, false);
+            // Checkpoint Detection
+            if (response.data && typeof response.data === 'string') {
+                const handled = await this._securityGuard.handleCheckpoint(response.data);
+                if (!handled) {
+                    // Log warning but don't break flow unless critical
+                }
+            }
             // Update cookies
             const setCookie = response.headers['set-cookie'];
             if (setCookie) {

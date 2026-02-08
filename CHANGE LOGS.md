@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Professional README**: Completely rewrote `README.md` with comprehensive feature lists, badges, and clear usage guides.
 - **Updated Examples**: Refactored `example.ts` to demonstrate environment variable usage and proper error handling.
 - **Type Definitions**: Enhanced `d.ts` files for better IntelliSense support.
+- **Community Files**: Added `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and `LICENSE.md`.
+
+### 📦 Dependencies & Build
+- **Dependency Updates**: Updated `axios`, `mqtt`, `fs-extra`, `cheerio` to latest stable versions.
+- **Version Fixes**: Corrected invalid versions for `uuid` and `typescript`.
+- **CJS Compatibility**: Pinned `chalk` to v4.x to maintain CommonJS compatibility.
 
 ## [1.3.0] - 2026-02-08
 

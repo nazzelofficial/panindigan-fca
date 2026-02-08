@@ -3,8 +3,15 @@ export declare class MQTTClient {
     private client;
     private ctx;
     private eventCallback;
+    private perfMgr;
+    private syncToken;
+    private capabilities;
+    private sessionID;
     constructor(ctx: ApiCtx, callback: (event: any) => void);
     connect(): void;
     private subscribe;
+    private handleMessage;
+    publish(topic: string, payload: any, qos?: 0 | 1 | 2): void;
     disconnect(): void;
+    getStatus(): boolean;
 }

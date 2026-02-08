@@ -6,8 +6,10 @@ export declare class PanindiganClient {
     private autoRefresh;
     private options;
     private onEventCallback;
+    private msgQueue;
+    private perfMgr;
     constructor(options?: ApiOption);
-    login(loginOptions: LoginOptions): Promise<void>;
+    login(loginOptions?: LoginOptions): Promise<void>;
     private startListening;
     on(callback: (event: any) => void): void;
     uploadAttachment(attachment: string | fs.ReadStream | Buffer): Promise<string[]>;
@@ -37,4 +39,26 @@ export declare class PanindiganClient {
     changeAdminStatus(threadId: string, userId: string, isAdmin: boolean): Promise<void>;
     changeThreadName(threadId: string, newName: string): Promise<void>;
     changeThreadImage(threadId: string, imagePath: string | Buffer | fs.ReadStream): Promise<void>;
+    createPost(message: string, privacy?: 'EVERYONE' | 'FRIENDS' | 'SELF', targetId?: string): Promise<string>;
+    deletePost(postId: string): Promise<void>;
+    reactToPost(postId: string, reaction: 'LIKE' | 'LOVE' | 'HAHA' | 'WOW' | 'SAD' | 'ANGRY'): Promise<void>;
+    commentOnPost(postId: string, comment: string): Promise<string>;
+    sharePost(postId: string, text?: string): Promise<void>;
+    getNotifications(limit?: number): Promise<any[]>;
+    markNotificationsRead(): Promise<void>;
+    sendSticker(threadId: string, stickerId: string): Promise<void>;
+    deleteMessage(messageId: string): Promise<void>;
+    sendImage(threadId: string, image: string | Buffer | fs.ReadStream, caption?: string): Promise<any>;
+    sendVideo(threadId: string, video: string | Buffer | fs.ReadStream, caption?: string): Promise<any>;
+    sendAudio(threadId: string, audio: string | Buffer | fs.ReadStream): Promise<any>;
+    sendFile(threadId: string, file: string | Buffer | fs.ReadStream, caption?: string): Promise<any>;
+    deleteThread(threadId: string): Promise<void>;
+    archiveThread(threadId: string, archive?: boolean): Promise<void>;
+    muteThread(threadId: string, seconds?: number): Promise<void>;
+    pinThread(threadId: string, pin: boolean): Promise<void>;
+    setApprovalMode(threadId: string, approvalMode: boolean): Promise<void>;
+    approveJoinRequest(threadId: string, userId: string): Promise<void>;
+    leaveGroup(threadId: string): Promise<void>;
+    acceptFriendRequest(userId: string): Promise<void>;
+    deleteFriendRequest(userId: string): Promise<void>;
 }

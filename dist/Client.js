@@ -41,16 +41,12 @@ const auth_1 = require("./auth");
 const mqtt_1 = require("./api/mqtt");
 const autoRefresh_1 = require("./utils/autoRefresh");
 const utils_1 = require("./utils/utils");
+const MessageQueue_1 = require("./utils/MessageQueue");
+const PerformanceManager_1 = require("./utils/PerformanceManager");
 const fs = __importStar(require("fs"));
 const form_data_1 = __importDefault(require("form-data"));
-// API Modules
-const friends_1 = require("./api/friends");
-const blocking_1 = require("./api/blocking");
-const search_1 = require("./api/search");
-const forwardMessage_1 = require("./api/forwardMessage");
-const polls_1 = require("./api/polls");
-const admin_1 = require("./api/admin");
-const thread_extra_1 = require("./api/thread_extra");
+const constants_1 = require("./utils/constants");
+const Logger_1 = require("./utils/Logger");
 class PanindiganClient {
     constructor(options = {}) {
         this.ctx = null;
@@ -58,8 +54,34 @@ class PanindiganClient {
         this.autoRefresh = null;
         this.onEventCallback = null;
         this.options = options;
+        this.msgQueue = new MessageQueue_1.MessageQueue();
+        this.perfMgr = PerformanceManager_1.PerformanceManager.getInstance();
     }
-    async login(loginOptions) {
+    async login(loginOptions = {}) {
+        // 1. Check provided appState
+        // 2. Check environment variable FB_APPSTATE
+        if (!loginOptions.appState) {
+            if (process.env.FB_APPSTATE) {
+                try {
+                    const rawState = process.env.FB_APPSTATE;
+                    // Handle both JSON string and Base64 encoded JSON
+                    if (rawState.trim().startsWith('[')) {
+                        loginOptions.appState = JSON.parse(rawState);
+                    }
+                    else {
+                        const buffer = Buffer.from(rawState, 'base64');
+                        loginOptions.appState = JSON.parse(buffer.toString('utf-8'));
+                    }
+                    Logger_1.logger.info('[Panindigan] Loaded AppState from environment variable.');
+                }
+                catch (e) {
+                    Logger_1.logger.error('[Panindigan] Failed to parse FB_APPSTATE from environment.', e);
+                }
+            }
+        }
+        if (!loginOptions.appState || loginOptions.appState.length === 0) {
+            throw new Error(constants_1.ERROR_MESSAGES.NO_APPSTATE);
+        }
         this.ctx = await (0, auth_1.login)(loginOptions, this.options);
         // Start AutoRefresh
         if (this.options.autoRefresh?.enable) {
@@ -106,38 +128,44 @@ class PanindiganClient {
         return json.payload?.metadata?.map((m) => m.image_id || m.file_id || m.video_id) || [];
     }
     async sendMessage(threadId, message) {
-        if (!this.ctx)
-            throw new Error('Not logged in');
-        const msg = typeof message === 'string' ? { body: message } : message;
-        const messageId = (Date.now() * 1000 + Math.floor(Math.random() * 1000)).toString();
-        let attachmentIds = [];
-        if (msg.attachment) {
-            attachmentIds = await this.uploadAttachment(msg.attachment);
-        }
-        const form = {
-            client: 'mercury',
-            fb_dtsg: this.ctx.fb_dtsg,
-            jazoest: this.ctx.ttstamp,
-            body: msg.body || '',
-            message_id: messageId,
-            other_user_fbid: threadId,
-            thread_fbid: threadId,
-            has_attachment: attachmentIds.length > 0,
-            ephemeral_ttl_mode: 0,
-        };
-        if (attachmentIds.length > 0) {
-            attachmentIds.forEach((id, i) => {
-                form[`image_ids[${i}]`] = id;
-            });
-        }
-        if (msg.replyToMessageId) {
-            form['replied_to_message_id'] = msg.replyToMessageId;
-        }
-        // Attempt to send via legacy endpoint
-        const res = await this.ctx.req.post('/messaging/send/', form);
-        return res.data;
+        return this.msgQueue.enqueue(async () => {
+            if (!this.ctx)
+                throw new Error('Not logged in');
+            const msg = typeof message === 'string' ? { body: message } : message;
+            const messageId = (Date.now() * 1000 + Math.floor(Math.random() * 1000)).toString();
+            let attachmentIds = [];
+            if (msg.attachment) {
+                attachmentIds = await this.uploadAttachment(msg.attachment);
+            }
+            const form = {
+                client: 'mercury',
+                fb_dtsg: this.ctx.fb_dtsg,
+                jazoest: this.ctx.ttstamp,
+                body: msg.body || '',
+                message_id: messageId,
+                other_user_fbid: threadId,
+                thread_fbid: threadId,
+                has_attachment: attachmentIds.length > 0,
+                ephemeral_ttl_mode: 0,
+            };
+            if (attachmentIds.length > 0) {
+                attachmentIds.forEach((id, i) => {
+                    form[`image_ids[${i}]`] = id;
+                });
+            }
+            if (msg.replyToMessageId) {
+                form['replied_to_message_id'] = msg.replyToMessageId;
+            }
+            // Attempt to send via legacy endpoint
+            const res = await this.ctx.req.post('/messaging/send/', form);
+            return res.data;
+        }, 10); // Priority 10
     }
     async getThreadList(limit = 20) {
+        const cacheKey = `thread_list_${limit}`;
+        const cached = this.perfMgr.getCache(cacheKey);
+        if (cached)
+            return cached;
         if (!this.ctx)
             throw new Error('Not logged in');
         const form = {
@@ -159,7 +187,7 @@ class PanindiganClient {
         const res = await this.ctx.req.post('/api/graphqlbatch/', form);
         const data = (0, utils_1.parseGraphQLBatch)(res.data);
         if (data[0] && data[0].viewer && data[0].viewer.message_threads) {
-            return data[0].viewer.message_threads.nodes.map((t) => ({
+            const result = data[0].viewer.message_threads.nodes.map((t) => ({
                 threadId: t.thread_key.thread_fbid || t.thread_key.other_user_id,
                 threadName: t.name,
                 isGroup: t.is_group_thread,
@@ -168,10 +196,17 @@ class PanindiganClient {
                 timestamp: t.updated_time_precise,
                 participants: t.all_participants.nodes.map((p) => p.messaging_actor.id),
             }));
+            this.perfMgr.setCache(cacheKey, result, 30); // 30s cache
+            return result;
         }
         return [];
     }
     async getUserInfo(userIds) {
+        const sortedIds = [...userIds].sort();
+        const cacheKey = `user_info_${sortedIds.join('_')}`;
+        const cached = this.perfMgr.getCache(cacheKey);
+        if (cached)
+            return cached;
         if (!this.ctx)
             throw new Error('Not logged in');
         // Use legacy endpoint for user info
@@ -184,7 +219,7 @@ class PanindiganClient {
         const res = await this.ctx.req.get(url);
         // Response format: { profiles: { [id]: { name, ... } } }
         const profiles = res.data.payload?.profiles || {};
-        return userIds.map(id => {
+        const result = userIds.map(id => {
             const p = profiles[id] || {};
             return {
                 id,
@@ -199,6 +234,8 @@ class PanindiganClient {
                 isBirthday: p.is_birthday
             };
         });
+        this.perfMgr.setCache(cacheKey, result, 300); // 5 min cache
+        return result;
     }
     async getMessageHistory(threadId, limit = 20, timestamp) {
         if (!this.ctx)
@@ -394,63 +431,74 @@ class PanindiganClient {
     async addFriend(userId) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, friends_1.addFriend)(this.ctx, userId);
+        const { addFriend } = await Promise.resolve().then(() => __importStar(require('./api/friends')));
+        return addFriend(this.ctx, userId);
     }
     async cancelFriendRequest(userId) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, friends_1.cancelFriendRequest)(this.ctx, userId);
+        const { cancelFriendRequest } = await Promise.resolve().then(() => __importStar(require('./api/friends')));
+        return cancelFriendRequest(this.ctx, userId);
     }
     async removeFriend(userId) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, friends_1.removeFriend)(this.ctx, userId);
+        const { removeFriend } = await Promise.resolve().then(() => __importStar(require('./api/friends')));
+        return removeFriend(this.ctx, userId);
     }
     async getFriendsList() {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, friends_1.getFriendsList)(this.ctx);
+        const { getFriendsList } = await Promise.resolve().then(() => __importStar(require('./api/friends')));
+        return getFriendsList(this.ctx);
     }
     // --- Blocking ---
     async blockUser(userId) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, blocking_1.blockUser)(this.ctx, userId);
+        const { blockUser } = await Promise.resolve().then(() => __importStar(require('./api/blocking')));
+        return blockUser(this.ctx, userId);
     }
     async unblockUser(userId) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, blocking_1.unblockUser)(this.ctx, userId);
+        const { unblockUser } = await Promise.resolve().then(() => __importStar(require('./api/blocking')));
+        return unblockUser(this.ctx, userId);
     }
     // --- Search ---
     async searchUser(query) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, search_1.searchUser)(this.ctx, query);
+        const { searchUser } = await Promise.resolve().then(() => __importStar(require('./api/search')));
+        return searchUser(this.ctx, query);
     }
     // --- Forwarding ---
     async forwardMessage(messageId, threadId) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, forwardMessage_1.forwardMessage)(this.ctx, messageId, threadId);
+        const { forwardMessage } = await Promise.resolve().then(() => __importStar(require('./api/forwardMessage')));
+        return forwardMessage(this.ctx, messageId, threadId);
     }
     // --- Polls ---
     async createPoll(threadId, title, options) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, polls_1.createPoll)(this.ctx, threadId, title, options);
+        const { createPoll } = await Promise.resolve().then(() => __importStar(require('./api/polls')));
+        return createPoll(this.ctx, threadId, title, options);
     }
     // --- Admin ---
     async changeAdminStatus(threadId, userId, isAdmin) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, admin_1.changeAdminStatus)(this.ctx, threadId, userId, isAdmin);
+        const { changeAdminStatus } = await Promise.resolve().then(() => __importStar(require('./api/admin')));
+        return changeAdminStatus(this.ctx, threadId, userId, isAdmin);
     }
     // --- Thread Extra ---
     async changeThreadName(threadId, newName) {
         if (!this.ctx)
             throw new Error('Not logged in');
-        return (0, thread_extra_1.changeThreadName)(this.ctx, threadId, newName);
+        const { changeThreadName } = await Promise.resolve().then(() => __importStar(require('./api/thread_extra')));
+        return changeThreadName(this.ctx, threadId, newName);
     }
     async changeThreadImage(threadId, imagePath) {
         if (!this.ctx)
@@ -459,7 +507,132 @@ class PanindiganClient {
         const attachmentIds = await this.uploadAttachment(imagePath);
         if (attachmentIds.length === 0)
             throw new Error('Failed to upload image');
-        return (0, thread_extra_1.changeThreadImage)(this.ctx, threadId, attachmentIds[0]);
+        const { changeThreadImage } = await Promise.resolve().then(() => __importStar(require('./api/thread_extra')));
+        return changeThreadImage(this.ctx, threadId, attachmentIds[0]);
+    }
+    // --- Timeline ---
+    async createPost(message, privacy = 'EVERYONE', targetId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { createPost } = await Promise.resolve().then(() => __importStar(require('./api/timeline')));
+        return createPost(this.ctx, message, privacy, targetId);
+    }
+    async deletePost(postId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { deletePost } = await Promise.resolve().then(() => __importStar(require('./api/timeline')));
+        return deletePost(this.ctx, postId);
+    }
+    async reactToPost(postId, reaction) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { reactToPost } = await Promise.resolve().then(() => __importStar(require('./api/timeline')));
+        return reactToPost(this.ctx, postId, reaction);
+    }
+    async commentOnPost(postId, comment) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { commentOnPost } = await Promise.resolve().then(() => __importStar(require('./api/timeline')));
+        return commentOnPost(this.ctx, postId, comment);
+    }
+    async sharePost(postId, text) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { sharePost } = await Promise.resolve().then(() => __importStar(require('./api/timeline')));
+        return sharePost(this.ctx, postId, text);
+    }
+    // --- Notifications ---
+    async getNotifications(limit = 10) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { getNotifications } = await Promise.resolve().then(() => __importStar(require('./api/notifications')));
+        return getNotifications(this.ctx, limit);
+    }
+    async markNotificationsRead() {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { markNotificationsRead } = await Promise.resolve().then(() => __importStar(require('./api/notifications')));
+        return markNotificationsRead(this.ctx);
+    }
+    // --- Advanced Messaging ---
+    async sendSticker(threadId, stickerId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { sendSticker } = await Promise.resolve().then(() => __importStar(require('./api/messaging_advanced')));
+        return sendSticker(this.ctx, threadId, stickerId);
+    }
+    async deleteMessage(messageId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { deleteMessage } = await Promise.resolve().then(() => __importStar(require('./api/messaging_advanced')));
+        return deleteMessage(this.ctx, messageId);
+    }
+    async sendImage(threadId, image, caption) {
+        return this.sendMessage(threadId, { body: caption || '', attachment: image });
+    }
+    async sendVideo(threadId, video, caption) {
+        return this.sendMessage(threadId, { body: caption || '', attachment: video });
+    }
+    async sendAudio(threadId, audio) {
+        return this.sendMessage(threadId, { body: '', attachment: audio });
+    }
+    async sendFile(threadId, file, caption) {
+        return this.sendMessage(threadId, { body: caption || '', attachment: file });
+    }
+    // --- Advanced Thread Management ---
+    async deleteThread(threadId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { deleteThread } = await Promise.resolve().then(() => __importStar(require('./api/thread_management')));
+        return deleteThread(this.ctx, threadId);
+    }
+    async archiveThread(threadId, archive = true) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { archiveThread } = await Promise.resolve().then(() => __importStar(require('./api/thread_management')));
+        return archiveThread(this.ctx, threadId, archive);
+    }
+    async muteThread(threadId, seconds = -1) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { muteThread } = await Promise.resolve().then(() => __importStar(require('./api/thread_management')));
+        return muteThread(this.ctx, threadId, seconds);
+    }
+    async pinThread(threadId, pin) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { pinThread } = await Promise.resolve().then(() => __importStar(require('./api/thread_management')));
+        return pinThread(this.ctx, threadId, pin);
+    }
+    async setApprovalMode(threadId, approvalMode) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { setApprovalMode } = await Promise.resolve().then(() => __importStar(require('./api/group_settings')));
+        return setApprovalMode(this.ctx, threadId, approvalMode);
+    }
+    async approveJoinRequest(threadId, userId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { approveJoinRequest } = await Promise.resolve().then(() => __importStar(require('./api/group_settings')));
+        return approveJoinRequest(this.ctx, threadId, userId);
+    }
+    async leaveGroup(threadId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        return this.removeParticipant(threadId, this.ctx.userID);
+    }
+    // --- Friend Requests ---
+    async acceptFriendRequest(userId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { acceptFriendRequest } = await Promise.resolve().then(() => __importStar(require('./api/friends')));
+        return acceptFriendRequest(this.ctx, userId);
+    }
+    async deleteFriendRequest(userId) {
+        if (!this.ctx)
+            throw new Error('Not logged in');
+        const { deleteFriendRequest } = await Promise.resolve().then(() => __importStar(require('./api/friends')));
+        return deleteFriendRequest(this.ctx, userId);
     }
 }
 exports.PanindiganClient = PanindiganClient;

@@ -7,6 +7,9 @@ export declare class Request {
     private _antiDetection;
     private _uaRotator;
     private _fingerprintMgr;
+    private _behavioralSim;
+    private _securityGuard;
+    private _perfMgr;
     constructor(appState?: AppState[], antiDetection?: AntiDetectionOptions);
     getJar(): AppState[];
     setJar(jar: AppState[]): void;

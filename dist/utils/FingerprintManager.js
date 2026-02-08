@@ -32,6 +32,23 @@ class FingerprintManager {
         this.generateFingerprint();
         this.lastRotation = Date.now();
     }
+    getSecurityHeaders() {
+        const fp = this.getFingerprint();
+        const headers = {};
+        // Entropy Injection: Add random noise headers (common in some frameworks/browsers)
+        if (Math.random() > 0.5) {
+            headers['X-Fb-Friendly-Name'] = this.getRandomFriendlyName();
+        }
+        // Canvas/WebGL Signatures as custom tracking headers (simulation)
+        // headers['X-Canvas-Fingerprint'] = fp.signatures.canvas; // Caution: Real FB might not expect this, but it simulates unique client state tracking if the server looks for it (hypothetically) or just client-side consistency.
+        // Better Entropy: Order of Accept-Language or slight variations
+        // This is hard to enforce in Axios object, but we can provide values.
+        return headers;
+    }
+    getRandomFriendlyName() {
+        const names = ['ViewerReactionsMutation', 'CometNewsFeedPagination', 'ProfileCometTimelineFeedRefetch', 'GeminiChatRequest'];
+        return names[Math.floor(Math.random() * names.length)];
+    }
     generateFingerprint() {
         // Realistic Screen Resolutions
         const screens = [

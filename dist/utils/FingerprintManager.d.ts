@@ -34,6 +34,8 @@ export declare class FingerprintManager {
     startRotation(intervalMs?: number): void;
     stopRotation(): void;
     rotateFingerprint(): void;
+    getSecurityHeaders(): any;
+    private getRandomFriendlyName;
     private generateFingerprint;
     private generatePluginList;
 }

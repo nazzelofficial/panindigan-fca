@@ -105,11 +105,39 @@ export interface AntiDetectionOptions {
     enable: boolean;
     userAgentRotation?: boolean;
     randomDelays?: boolean;
-    useProxies?: string[];
+    behavioralSimulation?: {
+        enable: boolean;
+        typingSimulation?: boolean;
+        readReceiptDelays?: boolean;
+        activityRandomization?: boolean;
+        patternDiffusion?: boolean;
+    };
+    securityGuard?: {
+        enable: boolean;
+        smartRateLimiting?: boolean;
+        antiSpam?: boolean;
+        checkpointSolver?: boolean;
+        captchaIntegration?: {
+            provider: '2captcha' | 'anticaptcha';
+            apiKey: string;
+        };
+    };
+    proxy?: {
+        enable: boolean;
+        source: 'list' | 'url';
+        proxies?: string[];
+        rotationStrategy?: 'random' | 'round-robin' | 'sticky';
+    };
     fingerprint?: {
         enable: boolean;
         autoRotate?: boolean;
         rotationInterval?: number;
+        spoofing?: {
+            screen?: boolean;
+            timezone?: boolean;
+            audio?: boolean;
+            canvas?: boolean;
+        };
     };
 }
 export interface ApiOption {
