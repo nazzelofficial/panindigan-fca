@@ -158,7 +158,17 @@ client.on('message', (msg) => commands.handleMessage(msg));
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.
+
+---
+
+## 🤝 Contributing & Community
+
+We welcome contributions from the community! Whether it's reporting a bug, suggesting a new feature, or submitting a pull request, your input is valuable.
+
+*   **[Contributing Guide](CONTRIBUTING.md)**: Learn how to contribute to the project.
+*   **[Code of Conduct](CODE_OF_CONDUCT.md)**: Our pledge to foster an open and welcoming environment.
+*   **[Security Policy](SECURITY.md)**: How to report security vulnerabilities responsibly.
 
 ---
 
