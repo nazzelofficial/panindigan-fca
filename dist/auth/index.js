@@ -51,6 +51,7 @@ async function login(options, globalOptions) {
         req,
         fb_dtsg,
         ttstamp,
-        irisSeqID
+        irisSeqID,
+        userAgent: req.getUserAgent()
     };
 }

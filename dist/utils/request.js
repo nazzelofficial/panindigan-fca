@@ -133,6 +133,9 @@ class Request {
     getJar() {
         return this._jar;
     }
+    getUserAgent() {
+        return this._defaultHeaders['User-Agent'];
+    }
     setJar(jar) {
         this._jar = jar;
     }

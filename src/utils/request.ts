@@ -153,6 +153,10 @@ export class Request {
     return this._jar;
   }
 
+  public getUserAgent(): string {
+    return this._defaultHeaders['User-Agent'];
+  }
+
   public setJar(jar: AppState[]) {
     this._jar = jar;
   }

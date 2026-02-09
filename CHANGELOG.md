@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.4] - 2026-02-09
+### Fixed
+- Fixed critical MQTT disconnection loop by shortening `clientId` to comply with MQTT 3.1 protocol limits (< 23 chars).
+- Synchronized `User-Agent` between Login and MQTT sessions to prevent security flags.
+- Removed experimental `x-msgr-region` header to ensure broader compatibility.
+
 ## [1.4.3] - 2026-02-09
 ### Fixed
 - Fixed MQTT disconnection loop by ensuring unique `clientId` for each session.

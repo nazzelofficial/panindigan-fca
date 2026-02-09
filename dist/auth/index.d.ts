@@ -13,5 +13,6 @@ export interface ApiCtx {
     fb_dtsg?: string;
     ttstamp?: string;
     irisSeqID?: string;
+    userAgent?: string;
 }
 export declare function login(options: LoginOptions, globalOptions?: any): Promise<ApiCtx>;

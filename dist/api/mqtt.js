@@ -47,8 +47,12 @@ class MQTTClient {
             p_device_id: deviceID,
             rc: 0
         });
+        // Generate a short, unique ClientID compliant with MQTT 3.1 (< 23 chars)
+        // Format: mqttwsclient-xxxxxx (12 + 1 + 6 = 19 chars)
+        const shortId = Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
+        const clientId = 'mqttwsclient-' + shortId;
         const options = {
-            clientId: 'mqttwsclient:' + deviceID,
+            clientId: clientId,
             protocolId: constants_1.MQTT_CONFIG.PROTOCOL_NAME,
             protocolVersion: constants_1.MQTT_CONFIG.PROTOCOL_LEVEL,
             username: username,
@@ -57,9 +61,8 @@ class MQTTClient {
                 headers: {
                     'Cookie': this.ctx.jar.map(c => `${c.key}=${c.value}`).join('; '),
                     'Origin': constants_1.FACEBOOK_URL,
-                    'User-Agent': this.ctx.globalOptions?.userAgent || constants_1.USER_AGENTS[0],
+                    'User-Agent': this.ctx.userAgent || this.ctx.globalOptions?.userAgent || constants_1.USER_AGENTS[0],
                     'Referer': constants_1.FACEBOOK_URL + '/',
-                    'x-msgr-region': 'FRC', // Hint region
                 },
                 origin: constants_1.FACEBOOK_URL
             },

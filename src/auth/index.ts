@@ -18,6 +18,7 @@ export interface ApiCtx {
   fb_dtsg?: string;
   ttstamp?: string;
   irisSeqID?: string;
+  userAgent?: string;
 }
 
 export async function login(options: LoginOptions, globalOptions?: any): Promise<ApiCtx> {
@@ -73,6 +74,7 @@ export async function login(options: LoginOptions, globalOptions?: any): Promise
     req,
     fb_dtsg,
     ttstamp,
-    irisSeqID
+    irisSeqID,
+    userAgent: req.getUserAgent()
   };
 }
