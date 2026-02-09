@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.15] - 2026-02-10
+### Fixed
+- **Event Formatting**: Added standard FCA formatting for `typ` (typing) and `presence` events to fix compatibility with existing bot commands.
+- **MQTT Stability**: Updated MQTT keepalive and connection timeouts to match standard configurations (30s keepalive).
+- **Listen Error**: Resolved "Listen error" by ensuring events are correctly formatted before dispatching to callbacks.
+
 ## [1.4.14] - 2026-02-10
 ### Fixed
 - **Logging**: Fixed `[object Object]` in MQTT info logs by properly stringifying event data.

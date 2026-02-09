@@ -86,10 +86,10 @@ export class MQTTClient {
         protocolVersion: 13,
         binaryType: 'arraybuffer'
       } as any,
-      keepalive: 10,
+      keepalive: MQTT_CONFIG.KEEP_ALIVE_DEFAULT,
       reschedulePings: true,
-      connectTimeout: 60000,
-      reconnectPeriod: 3000,
+      connectTimeout: MQTT_CONFIG.CONNECT_TIMEOUT,
+      reconnectPeriod: MQTT_CONFIG.RECONNECT_PERIOD,
     };
 
     if (this.ctx.globalOptions?.proxy) {

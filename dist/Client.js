@@ -118,6 +118,25 @@ class PanindiganClient {
                         Logger_1.logger.error('[Panindigan] Dispatching MQTT Error:', errorMsg);
                         this.onEventCallback(event.error, null);
                     }
+                    else if (event.type === 'typ') {
+                        const formattedTyping = {
+                            type: 'typ',
+                            isTyping: event.data.state === 1,
+                            from: String(event.data.sender_fbid),
+                            threadID: event.data.thread,
+                            senderID: String(event.data.sender_fbid) // Alias for compatibility
+                        };
+                        this.onEventCallback(null, formattedTyping);
+                    }
+                    else if (event.type === 'presence') {
+                        const formattedPresence = {
+                            type: 'presence',
+                            timestamp: Date.now(),
+                            userID: String(event.data.list[0].u),
+                            statuses: event.data.list[0].p
+                        };
+                        this.onEventCallback(null, formattedPresence);
+                    }
                     else {
                         Logger_1.logger.info(`[Panindigan] Dispatching Event (${event.type}):`, JSON.stringify(event));
                         this.onEventCallback(null, event);

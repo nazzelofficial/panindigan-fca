@@ -76,10 +76,10 @@ class MQTTClient {
                 protocolVersion: 13,
                 binaryType: 'arraybuffer'
             },
-            keepalive: 10,
+            keepalive: constants_1.MQTT_CONFIG.KEEP_ALIVE_DEFAULT,
             reschedulePings: true,
-            connectTimeout: 60000,
-            reconnectPeriod: 3000,
+            connectTimeout: constants_1.MQTT_CONFIG.CONNECT_TIMEOUT,
+            reconnectPeriod: constants_1.MQTT_CONFIG.RECONNECT_PERIOD,
         };
         if (this.ctx.globalOptions?.proxy) {
             options.wsOptions.agent = new https_proxy_agent_1.HttpsProxyAgent(this.ctx.globalOptions.proxy);
