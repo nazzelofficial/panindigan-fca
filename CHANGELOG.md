@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.14] - 2026-02-10
+### Fixed
+- **Logging**: Fixed `[object Object]` in MQTT info logs by properly stringifying event data.
+- **Debugging**: Added verbose info logging for event dispatching to help trace "Listen error" issues.
+
 ## [1.4.13] - 2026-02-10
 ### Fixed
 - **Listen Error Logging**: Fixed `[object Object]` error logs by ensuring error objects are properly stringified before logging.

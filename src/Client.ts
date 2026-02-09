@@ -88,7 +88,7 @@ export class PanindiganClient {
              logger.error('[Panindigan] Dispatching MQTT Error:', errorMsg);
              this.onEventCallback(event.error, null);
           } else {
-              // logger.debug('[Panindigan] Dispatching Event:', event.type);
+              logger.info(`[Panindigan] Dispatching Event (${event.type}):`, JSON.stringify(event));
               this.onEventCallback(null, event);
           }
         } catch (e) {

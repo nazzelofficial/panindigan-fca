@@ -170,7 +170,7 @@ class MQTTClient {
                 }
             }
             else if (topic === constants_1.MQTT_TOPICS.TYPING || topic === constants_1.MQTT_TOPICS.NOTIFICATIONS) {
-                Logger_1.logger.info('Processing Typing/Notification:', data);
+                Logger_1.logger.info('Processing Typing/Notification:', JSON.stringify(data));
                 this.eventCallback({ type: 'typ', data });
             }
             else if (topic === constants_1.MQTT_TOPICS.PRESENCE) {

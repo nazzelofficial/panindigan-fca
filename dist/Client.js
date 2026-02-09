@@ -119,7 +119,7 @@ class PanindiganClient {
                         this.onEventCallback(event.error, null);
                     }
                     else {
-                        // logger.debug('[Panindigan] Dispatching Event:', event.type);
+                        Logger_1.logger.info(`[Panindigan] Dispatching Event (${event.type}):`, JSON.stringify(event));
                         this.onEventCallback(null, event);
                     }
                 }
