@@ -123,17 +123,46 @@ class PanindiganClient {
         this.mqtt.connect();
     }
     listenMqtt(callback) {
+        if (typeof callback !== 'function') {
+            Logger_1.logger.error('[Panindigan] listenMqtt expected a callback function.');
+            return;
+        }
         this.onEventCallback = callback;
         if (!this.mqtt || !this.mqtt.getStatus()) {
             this.startListening();
         }
     }
-    on(callback) {
+    on(arg1, arg2) {
+        let callback;
+        if (typeof arg1 === 'function') {
+            callback = arg1;
+        }
+        else if (typeof arg1 === 'string' && typeof arg2 === 'function') {
+            // Handle .on('message', cb) style
+            const eventName = arg1;
+            const listener = arg2;
+            callback = (event) => {
+                // Simple filtering to prevent crashing
+                if (eventName === 'message' && event.type === 'message') {
+                    listener(event);
+                }
+                else if (eventName !== 'message') {
+                    // Pass other events or all events if they asked for 'data'/'event'
+                    listener(event);
+                }
+            };
+        }
+        else {
+            Logger_1.logger.warn('[Panindigan] Invalid arguments passed to .on(). Expected function or (event, function).');
+            return;
+        }
         // Adapter for legacy .on method to match (err, event) signature
         this.onEventCallback = (err, event) => {
             if (err)
-                return; // Legacy .on usually just wants events? Or maybe we should log error?
-            callback(event);
+                return;
+            if (typeof callback === 'function') {
+                callback(event);
+            }
         };
         if (!this.mqtt || !this.mqtt.getStatus()) {
             this.startListening();
@@ -267,15 +296,20 @@ class PanindiganClient {
             const p = data?.user || data?.profile || {};
             let name = p.name;
             if (!name) {
-                try {
-                    // Fallback: Scrape profile page title
-                    const profileRes = await this.ctx.req.get(`https://www.facebook.com/${id}`);
-                    const $ = cheerio.load(profileRes.data);
-                    const title = $('title').text();
-                    name = title.replace(' | Facebook', '').trim();
+                if (id === this.ctx?.userID && this.ctx?.userName && this.ctx.userName !== 'Unknown') {
+                    name = this.ctx.userName;
                 }
-                catch (e) {
-                    // Ignore fallback error
+                else {
+                    try {
+                        // Fallback: Scrape profile page title
+                        const profileRes = await this.ctx.req.get(`https://www.facebook.com/profile.php?id=${id}`);
+                        const $ = cheerio.load(profileRes.data);
+                        const title = $('title').text();
+                        name = title.replace(' | Facebook', '').trim();
+                    }
+                    catch (e) {
+                        // Ignore fallback error
+                    }
                 }
             }
             return {

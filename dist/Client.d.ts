@@ -13,7 +13,7 @@ export declare class PanindiganClient {
     login(loginOptions?: LoginOptions): Promise<void>;
     startListening(): void;
     listenMqtt(callback: (err: any, event: any) => void): void;
-    on(callback: (event: any) => void): void;
+    on(arg1: any, arg2?: any): void;
     uploadAttachment(attachment: string | fs.ReadStream | Buffer): Promise<string[]>;
     sendMessage(threadId: string, message: string | SendMessageOptions): Promise<any>;
     getThreadList(limit?: number): Promise<Thread[]>;

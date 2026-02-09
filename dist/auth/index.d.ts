@@ -14,5 +14,6 @@ export interface ApiCtx {
     ttstamp?: string;
     irisSeqID?: string;
     userAgent?: string;
+    userName?: string;
 }
 export declare function login(options: LoginOptions, globalOptions?: any): Promise<ApiCtx>;
