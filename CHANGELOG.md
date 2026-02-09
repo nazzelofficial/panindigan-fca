@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.9] - 2026-02-09
+### Fixed
+- **Critical MQTT Bug**: Fixed "Connection refused" caused by malformed Cookie header (handled `c.name` vs `c.key` inconsistency).
+- **User Identity**: Fixed "Unknown" account name by adding a robust profile scraping fallback when GraphQL fails.
+- **Connection**: Ensured `mqtt` options fully align with legacy protocols.
+
 ## [1.4.8] - 2026-02-09
 ### Fixed
 - **MQTT Authentication**: Updated `FACEBOOK_APP_ID` to Messenger Web standard (`219994525426954`) to resolve "Connection refused" errors.

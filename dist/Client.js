@@ -45,6 +45,7 @@ const MessageQueue_1 = require("./utils/MessageQueue");
 const PerformanceManager_1 = require("./utils/PerformanceManager");
 const Formatter_1 = require("./utils/Formatter");
 const fs = __importStar(require("fs"));
+const cheerio = __importStar(require("cheerio"));
 const form_data_1 = __importDefault(require("form-data"));
 const constants_1 = require("./utils/constants");
 const Logger_1 = require("./utils/Logger");
@@ -259,15 +260,28 @@ class PanindiganClient {
         };
         const res = await this.ctx.req.post('/api/graphqlbatch/', form);
         const responseMap = (0, utils_1.parseGraphQLBatchMap)(res.data);
-        const result = userIds.map((id, i) => {
+        const result = await Promise.all(userIds.map(async (id, i) => {
             const data = responseMap[`u${i}`];
             // Structure: { user: { name, gender, url, profile_picture: { uri } } }
             // Or { profile: { ... } } depending on the query
             const p = data?.user || data?.profile || {};
+            let name = p.name;
+            if (!name) {
+                try {
+                    // Fallback: Scrape profile page title
+                    const profileRes = await this.ctx.req.get(`https://www.facebook.com/${id}`);
+                    const $ = cheerio.load(profileRes.data);
+                    const title = $('title').text();
+                    name = title.replace(' | Facebook', '').trim();
+                }
+                catch (e) {
+                    // Ignore fallback error
+                }
+            }
             return {
                 id,
-                name: p.name || 'Unknown User',
-                firstName: p.short_name || p.name?.split(' ')[0],
+                name: name || 'Unknown User',
+                firstName: p.short_name || name?.split(' ')[0] || 'Unknown',
                 vanity: p.vanity || p.username,
                 thumbSrc: p.profile_picture?.uri,
                 profileUrl: p.url || `https://www.facebook.com/${id}`,
@@ -276,7 +290,7 @@ class PanindiganClient {
                 isFriend: p.is_viewer_friend,
                 isBirthday: p.is_birthday
             };
-        });
+        }));
         this.perfMgr.setCache(cacheKey, result, 300); // 5 min cache
         return result;
     }

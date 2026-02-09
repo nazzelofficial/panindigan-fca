@@ -68,7 +68,7 @@ export class MQTTClient {
       clean: true,
       wsOptions: {
         headers: {
-          'Cookie': this.ctx.jar.map(c => `${c.key}=${c.value}`).join('; '),
+          'Cookie': this.ctx.jar.map(c => `${c.key || c.name}=${c.value}`).join('; '),
           'Origin': 'https://www.facebook.com',
           'User-Agent': this.ctx.userAgent || this.ctx.globalOptions?.userAgent || USER_AGENTS[0],
           'Referer': 'https://www.facebook.com/',
