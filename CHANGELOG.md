@@ -18,9 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.6] - 2026-02-09
+### Fixed
+- Replaced MQTT connection stream builder with `websocket-stream` for maximum compatibility.
+- Added `websocket-stream` and `https-proxy-agent` dependencies.
+- Updated MQTT options: explicit `keepalive: 10`, `connectTimeout: 60000`, `reconnectPeriod: 1000`.
+- Implemented exact replica of `stream creation logic.`
+
 ## [1.4.5] - 2026-02-09
 ### Fixed
-- Fully aligned MQTT connection logic with `ws3-fca` for maximum compatibility.
+- Fully aligned MQTT connection logic for maximum compatibility.
 - Updated MQTT Broker URL to `wss://edge-chat.messenger.com/chat`.
 - Added required query parameters (`sid`, `cid`) to MQTT connection URL.
 - Added `User-Agent` to MQTT username payload (required for security validation).
@@ -35,13 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.3] - 2026-02-09
 ### Fixed
 - Fixed MQTT disconnection loop by ensuring unique `clientId` for each session.
-- Fixed `listenMqtt` compatibility by formatting raw deltas into `ws3-fca` compatible event objects.
+- Fixed `listenMqtt` compatibility by formatting raw deltas into compatible event objects.
 - Added `x-msgr-region` header to MQTT connection for better stability.
 
 ## [1.4.2] - 2026-02-09
 
 ### Fixed
-- **AppState Compatibility**: Improved cookie parsing to support `name` property (common in `ws3-fca` and browser exports) alongside `key`.
+- **AppState Compatibility**: Improved cookie parsing to support `name` property and browser exports alongside `key`.
 - **Login Reliability**: Enhanced `c_user` extraction logic to work with varied cookie formats.
 
 ## [1.4.1] - 2026-02-09

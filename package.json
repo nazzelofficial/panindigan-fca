@@ -1,6 +1,6 @@
 {
   "name": "panindigan-fca",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "description": "A robust, type-safe, and feature-rich library for interacting with Facebook Messenger programmatically",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -55,8 +55,10 @@
     "cheerio": "^1.0.0",
     "form-data": "^4.0.1",
     "fs-extra": "^11.2.0",
+    "https-proxy-agent": "^7.0.6",
     "mqtt": "^5.10.3",
-    "uuid": "^11.0.5"
+    "uuid": "^11.0.5",
+    "websocket-stream": "^5.5.2"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",

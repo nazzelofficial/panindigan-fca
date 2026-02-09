@@ -1,4 +1,6 @@
 import mqtt from 'mqtt';
+import websocket from 'websocket-stream';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { ApiCtx } from '../auth';
 import { MQTT_BROKER_URL, USER_AGENTS, MQTT_TOPICS, MQTT_CAPABILITIES, FACEBOOK_URL, FACEBOOK_APP_ID, MQTT_CONFIG } from '../utils/constants';
 import { PerformanceManager } from '../utils/PerformanceManager';
@@ -51,8 +53,11 @@ export class MQTTClient {
     // Use static clientId as seen in ws3-fca
     const clientId = 'mqttwsclient';
     
-    // Construct URL with query parameters required by Messenger MQTT
-    const mqttUrl = `${MQTT_BROKER_URL}?sid=${sessionID}&cid=${deviceID}`;
+    // Host construction logic from ws3-fca
+    let host = MQTT_BROKER_URL;
+    // Note: ws3-fca appends params to host for websocket stream, but options.wsOptions.headers.Host must be just hostname
+    // We construct the full URL for websocket-stream
+    const mqttUrl = `${host}?sid=${sessionID}&cid=${deviceID}`;
 
     const options: mqtt.IClientOptions = {
       clientId: clientId,
@@ -66,17 +71,24 @@ export class MQTTClient {
           'Origin': 'https://www.messenger.com',
           'User-Agent': this.ctx.userAgent || this.ctx.globalOptions?.userAgent || USER_AGENTS[0],
           'Referer': 'https://www.messenger.com/',
-          'Host': new URL(MQTT_BROKER_URL).hostname
+          'Host': new URL(host).hostname
         },
-        origin: 'https://www.messenger.com'
-      },
-      keepalive: this.ctx.globalOptions?.autoRefresh?.mqttKeepAliveInterval || MQTT_CONFIG.KEEP_ALIVE_DEFAULT,
+        origin: 'https://www.messenger.com',
+        protocolVersion: 13,
+        binaryType: 'arraybuffer'
+      } as any, // Cast to any because mqtt types don't include binaryType in wsOptions
+      keepalive: 10,
       reschedulePings: true,
-      connectTimeout: MQTT_CONFIG.CONNECT_TIMEOUT,
-      reconnectPeriod: MQTT_CONFIG.RECONNECT_PERIOD,
+      connectTimeout: 60000,
+      reconnectPeriod: 1000,
     };
 
-    this.client = mqtt.connect(mqttUrl, options);
+    if (this.ctx.globalOptions?.proxy) {
+        (options.wsOptions as any).agent = new HttpsProxyAgent(this.ctx.globalOptions.proxy);
+    }
+
+    // Exact replica of ws3-fca client creation using websocket-stream
+    this.client = new mqtt.Client(() => websocket(mqttUrl, options.wsOptions), options);
 
     this.client.on('connect', () => {
       logger.success('MQTT Connected');
