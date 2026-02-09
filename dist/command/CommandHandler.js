@@ -186,6 +186,7 @@ class CommandHandler extends events_1.EventEmitter {
         }
         if (!command)
             return;
+        Logger_1.logger.info(`[CommandHandler] Matched command: ${command.name}`);
         // 4. Check Permissions
         if (command.permissionLevel) {
             const hasPerm = this.permissions.hasPermission(message.senderId, command.permissionLevel);
@@ -236,6 +237,7 @@ class CommandHandler extends events_1.EventEmitter {
             };
             await executeChain(0);
             this.emit('commandFinish', command, ctx);
+            Logger_1.logger.success(`[CommandHandler] Command ${command.name} executed successfully.`);
         }
         catch (e) {
             this.emit('commandError', command, e, ctx);

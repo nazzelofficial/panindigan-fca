@@ -82,6 +82,7 @@ class MQTTClient {
         this.client = new mqtt_1.default.Client(() => (0, websocket_stream_1.default)(mqttUrl, options.wsOptions), options);
         this.client.on('connect', () => {
             Logger_1.logger.success('MQTT Connected');
+            Logger_1.logger.info(`MQTT Session ID: ${sessionID}`);
             this.perfMgr.recordRequest(0, 0, 0, false); // Record connection event
             this.subscribe();
         });
@@ -113,37 +114,39 @@ class MQTTClient {
         };
         this.client.subscribe(topics, (err) => {
             if (err) {
-                console.error('Subscription failed:', err);
+                Logger_1.logger.error('MQTT Subscription failed:', err);
                 this.eventCallback({ type: 'mqtt_subscribe_error', error: err });
             }
             else {
-                console.log('Subscribed to topics');
+                Logger_1.logger.info('MQTT Subscribed to topics: ' + Object.keys(topics).join(', '));
             }
         });
     }
     handleMessage(topic, message) {
         const startTime = Date.now();
         const payloadSize = message.length;
+        // Log raw message reception
+        Logger_1.logger.info(`MQTT Received message on topic: ${topic} (Size: ${payloadSize} bytes)`);
         try {
             const payloadString = message.toString();
             let data;
             try {
                 data = JSON.parse(payloadString);
+                // Log parsed data for debugging (professional logs)
+                Logger_1.logger.info(`MQTT Parsed Payload [${topic}]:`, JSON.stringify(data, null, 2));
             }
             catch (jsonErr) {
-                // If not JSON, it might be raw data or specific format.
-                // For now, we emit as raw if JSON parse fails.
+                Logger_1.logger.error('Error parsing MQTT payload:', jsonErr);
+                Logger_1.logger.debug('Raw Payload:', payloadString);
                 this.eventCallback({ type: 'mqtt_raw', topic, data: message });
                 this.perfMgr.recordRequest(Date.now() - startTime, payloadSize, 0, true);
                 return;
             }
-            // Record metrics
             this.perfMgr.recordRequest(Date.now() - startTime, payloadSize, 0, false);
             if (topic === constants_1.MQTT_TOPICS.MESSAGING) {
                 if (data.deltas) {
-                    // Handle delta array
                     data.deltas.forEach((delta) => {
-                        // Update sync token if present
+                        Logger_1.logger.info('Processing Delta:', JSON.stringify(delta, null, 2));
                         if (data.firstDeltaSeqId) {
                             this.syncToken = data.firstDeltaSeqId;
                         }
@@ -151,36 +154,42 @@ class MQTTClient {
                     });
                 }
                 else {
+                    Logger_1.logger.info('Processing Messaging Event (No Deltas):', data);
                     this.eventCallback({ type: 'mqtt_event', topic, data });
                 }
             }
             else if (topic === constants_1.MQTT_TOPICS.TYPING || topic === constants_1.MQTT_TOPICS.NOTIFICATIONS) {
+                Logger_1.logger.info('Processing Typing/Notification:', data);
                 this.eventCallback({ type: 'typ', data });
             }
             else if (topic === constants_1.MQTT_TOPICS.PRESENCE) {
+                Logger_1.logger.info('Processing Presence:', data);
                 this.eventCallback({ type: 'presence', data });
             }
             else {
+                Logger_1.logger.info('Processing Other MQTT Event:', data);
                 this.eventCallback({ type: 'mqtt_event', topic, data });
             }
         }
         catch (e) {
-            console.error('Error handling MQTT message:', e);
+            Logger_1.logger.error('Error handling MQTT message:', e);
             this.perfMgr.recordRequest(Date.now() - startTime, payloadSize, 0, true);
         }
     }
     publish(topic, payload, qos = 0) {
         if (!this.client || !this.client.connected) {
-            console.warn('MQTT Client not connected, cannot publish');
+            Logger_1.logger.warn('MQTT Client not connected, cannot publish');
             return;
         }
         const message = typeof payload === 'string' ? payload : JSON.stringify(payload);
+        Logger_1.logger.info(`MQTT Publishing to ${topic}:`, message);
         this.client.publish(topic, message, { qos }, (err) => {
             if (err) {
-                console.error(`Failed to publish to ${topic}:`, err);
+                Logger_1.logger.error(`Failed to publish to ${topic}:`, err);
             }
             else {
                 this.perfMgr.recordRequest(0, 0, message.length, false);
+                Logger_1.logger.info(`Successfully published to ${topic}`);
             }
         });
     }

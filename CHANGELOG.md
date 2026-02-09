@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.12] - 2026-02-09
+### Fixed
+- **MQTT Error Logging**: Improved error handling to ensure error objects are properly logged instead of `[object Object]`.
+- **Build System**: Updated `clean` script to be cross-platform (Windows compatible) using Node.js `fs.rmSync`.
+### Added
+- **Professional Logging**: Added comprehensive MQTT logging (connection, subscription, message payload, parsing) and CommandHandler logging to aid in debugging group chat issues.
+
 ## [1.4.11] - 2026-02-09
 ### Fixed
 - **Event Listener Crash**: Fixed `TypeError: callback is not a function` by adding robust argument validation to `listenMqtt` and `.on` methods.

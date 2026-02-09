@@ -1,6 +1,6 @@
 {
   "name": "panindigan-fca",
-  "version": "1.4.11",
+  "version": "1.4.12",
   "description": "A robust, type-safe, and feature-rich library for interacting with Facebook Messenger programmatically",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,11 +9,11 @@
   },
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "pnpm run build",
+    "prepublishOnly": "npm run clean && pnpm run build",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "clean": "rm -rf dist"
+    "clean": "node -e \"const fs = require('fs'); fs.rmSync('dist', { recursive: true, force: true });\""
   },
   "keywords": [
     "facebook",

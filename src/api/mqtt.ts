@@ -93,6 +93,7 @@ export class MQTTClient {
 
     this.client.on('connect', () => {
       logger.success('MQTT Connected');
+      logger.info(`MQTT Session ID: ${sessionID}`);
       this.perfMgr.recordRequest(0, 0, 0, false); // Record connection event
       this.subscribe();
     });
@@ -130,10 +131,10 @@ export class MQTTClient {
 
     this.client.subscribe(topics, (err) => {
       if (err) {
-        console.error('Subscription failed:', err);
+        logger.error('MQTT Subscription failed:', err);
         this.eventCallback({ type: 'mqtt_subscribe_error', error: err });
       } else {
-        console.log('Subscribed to topics');
+        logger.info('MQTT Subscribed to topics: ' + Object.keys(topics).join(', '));
       }
     });
   }
@@ -141,6 +142,9 @@ export class MQTTClient {
   private handleMessage(topic: string, message: Buffer) {
     const startTime = Date.now();
     const payloadSize = message.length;
+    
+    // Log raw message reception
+    logger.info(`MQTT Received message on topic: ${topic} (Size: ${payloadSize} bytes)`);
 
     try {
       const payloadString = message.toString();
@@ -148,57 +152,63 @@ export class MQTTClient {
 
       try {
         data = JSON.parse(payloadString);
+        // Log parsed data for debugging (professional logs)
+        logger.info(`MQTT Parsed Payload [${topic}]:`, JSON.stringify(data, null, 2));
       } catch (jsonErr) {
-        // If not JSON, it might be raw data or specific format.
-        // For now, we emit as raw if JSON parse fails.
-        this.eventCallback({ type: 'mqtt_raw', topic, data: message });
+          logger.error('Error parsing MQTT payload:', jsonErr as Error);
+          logger.debug('Raw Payload:', payloadString);
+          this.eventCallback({ type: 'mqtt_raw', topic, data: message });
         this.perfMgr.recordRequest(Date.now() - startTime, payloadSize, 0, true);
         return;
       }
 
-      // Record metrics
       this.perfMgr.recordRequest(Date.now() - startTime, payloadSize, 0, false);
 
       if (topic === MQTT_TOPICS.MESSAGING) {
         if (data.deltas) {
-          // Handle delta array
           data.deltas.forEach((delta: any) => {
-            // Update sync token if present
+            logger.info('Processing Delta:', JSON.stringify(delta, null, 2));
             if (data.firstDeltaSeqId) {
                 this.syncToken = data.firstDeltaSeqId;
             }
             this.eventCallback({ type: 'message', delta });
           });
         } else {
+           logger.info('Processing Messaging Event (No Deltas):', data);
            this.eventCallback({ type: 'mqtt_event', topic, data });
         }
       } else if (topic === MQTT_TOPICS.TYPING || topic === MQTT_TOPICS.NOTIFICATIONS) {
+        logger.info('Processing Typing/Notification:', data);
         this.eventCallback({ type: 'typ', data });
       } else if (topic === MQTT_TOPICS.PRESENCE) {
+        logger.info('Processing Presence:', data);
         this.eventCallback({ type: 'presence', data });
       } else {
+        logger.info('Processing Other MQTT Event:', data);
         this.eventCallback({ type: 'mqtt_event', topic, data });
       }
 
     } catch (e) {
-      console.error('Error handling MQTT message:', e);
+      logger.error('Error handling MQTT message:', e as Error);
       this.perfMgr.recordRequest(Date.now() - startTime, payloadSize, 0, true);
     }
   }
 
   public publish(topic: string, payload: any, qos: 0 | 1 | 2 = 0): void {
       if (!this.client || !this.client.connected) {
-          console.warn('MQTT Client not connected, cannot publish');
+          logger.warn('MQTT Client not connected, cannot publish');
           return;
       }
 
       const message = typeof payload === 'string' ? payload : JSON.stringify(payload);
+      logger.info(`MQTT Publishing to ${topic}:`, message);
       
       this.client.publish(topic, message, { qos }, (err) => {
           if (err) {
-              console.error(`Failed to publish to ${topic}:`, err);
+              logger.error(`Failed to publish to ${topic}:`, err);
           } else {
               this.perfMgr.recordRequest(0, 0, message.length, false);
+              logger.info(`Successfully published to ${topic}`);
           }
       });
   }
