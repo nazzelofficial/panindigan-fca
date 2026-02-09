@@ -13,7 +13,7 @@ export function generateOfflineThreadingID(): string {
 }
 
 export function formatCookie(arr: any[], url: string): string {
-  return arr.filter(c => url.includes(c.domain.replace(/^\./, ''))).map(c => `${c.key}=${c.value}`).join('; ');
+  return arr.filter(c => url.includes(c.domain.replace(/^\./, ''))).map(c => `${c.key || c.name}=${c.value}`).join('; ');
 }
 
 export function getFrom(str: string, startToken: string, endToken: string): string {

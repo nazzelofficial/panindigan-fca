@@ -30,7 +30,7 @@ async function login(options, globalOptions) {
     const fb_dtsg = (0, utils_1.getFrom)(body, 'name="fb_dtsg" value="', '"') ||
         (0, utils_1.getFrom)(body, '["DTSGInitialData",[],{"token":"', '"');
     const userID = (0, utils_1.getFrom)(body, 'c_user=', ';') ||
-        appState?.find(c => c.key === 'c_user')?.value || '';
+        appState?.find(c => (c.key === 'c_user' || c.name === 'c_user'))?.value || '';
     const irisSeqID = (0, utils_1.getFrom)(body, '"irisSeqID":"', '"');
     if (!userID) {
         throw new Error(constants_1.ERROR_MESSAGES.NOT_LOGGED_IN);

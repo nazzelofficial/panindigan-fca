@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.2] - 2026-02-09
+
+### Fixed
+- **AppState Compatibility**: Improved cookie parsing to support `name` property (common in `ws3-fca` and browser exports) alongside `key`.
+- **Login Reliability**: Enhanced `c_user` extraction logic to work with varied cookie formats.
+
 ## [1.4.1] - 2026-02-09
 
 ### Fixed

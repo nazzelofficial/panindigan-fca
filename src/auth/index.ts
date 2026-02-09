@@ -48,7 +48,7 @@ export async function login(options: LoginOptions, globalOptions?: any): Promise
                   getFrom(body, '["DTSGInitialData",[],{"token":"', '"');
   
   const userID = getFrom(body, 'c_user=', ';') || 
-                 appState?.find(c => c.key === 'c_user')?.value || '';
+                 appState?.find(c => (c.key === 'c_user' || c.name === 'c_user'))?.value || '';
 
   const irisSeqID = getFrom(body, '"irisSeqID":"', '"');
 

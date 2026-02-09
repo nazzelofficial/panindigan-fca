@@ -18,7 +18,7 @@ function generateOfflineThreadingID() {
     return parseInt(msgs, 2).toString();
 }
 function formatCookie(arr, url) {
-    return arr.filter(c => url.includes(c.domain.replace(/^\./, ''))).map(c => `${c.key}=${c.value}`).join('; ');
+    return arr.filter(c => url.includes(c.domain.replace(/^\./, ''))).map(c => `${c.key || c.name}=${c.value}`).join('; ');
 }
 function getFrom(str, startToken, endToken) {
     const start = str.indexOf(startToken) + startToken.length;

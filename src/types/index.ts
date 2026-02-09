@@ -1,13 +1,15 @@
 import fs from 'fs';
 
 export interface AppState {
-  key: string;
+  key?: string;
+  name?: string;
   value: string;
   domain: string;
   path: string;
-  hostOnly: boolean;
-  creation: string;
-  lastAccessed: string;
+  hostOnly?: boolean;
+  creation?: string;
+  lastAccessed?: string;
+  [key: string]: any;
 }
 
 export interface User {
