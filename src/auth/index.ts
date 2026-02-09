@@ -19,6 +19,7 @@ export interface ApiCtx {
   ttstamp?: string;
   irisSeqID?: string;
   userAgent?: string;
+  userName?: string;
 }
 
 export async function login(options: LoginOptions, globalOptions?: any): Promise<ApiCtx> {
@@ -63,6 +64,20 @@ export async function login(options: LoginOptions, globalOptions?: any): Promise
     ttstamp += fb_dtsg!.charCodeAt(i);
   }
 
+  // Extract user name from title if possible
+  let userName = 'Unknown';
+  try {
+      const $ = cheerio.load(body);
+      const title = $('title').text();
+      // Titles are usually "Name | Facebook" or just "Facebook"
+      if (title && !title.includes('Log In') && !title.includes('Log into')) {
+          userName = title.replace(' | Facebook', '').trim();
+          if (userName === 'Facebook') userName = 'Unknown';
+      }
+  } catch (e) {
+      // Ignore
+  }
+
   return {
     userID,
     jar: req.getJar(),
@@ -75,6 +90,7 @@ export async function login(options: LoginOptions, globalOptions?: any): Promise
     fb_dtsg,
     ttstamp,
     irisSeqID,
-    userAgent: req.getUserAgent()
+    userAgent: req.getUserAgent(),
+    userName
   };
 }

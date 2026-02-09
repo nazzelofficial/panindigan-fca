@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.11] - 2026-02-09
+### Fixed
+- **Event Listener Crash**: Fixed `TypeError: callback is not a function` by adding robust argument validation to `listenMqtt` and `.on` methods.
+- **EventEmitter Compatibility**: Added support for `.on('message', callback)` signature to support bot frameworks that treat the client as an EventEmitter.
+
+## [1.4.10] - 2026-02-09
+### Fixed
+- **Account Name Resolution**: Fixed "Unknown" account name issue by extracting name directly from login page and improving profile scraping fallback.
+- **Profile Scraping**: Updated fallback profile URL to use `profile.php?id=` for better reliability with numeric IDs.
+
 ## [1.4.9] - 2026-02-09
 ### Fixed
 - **Critical MQTT Bug**: Fixed "Connection refused" caused by malformed Cookie header (handled `c.name` vs `c.key` inconsistency).
