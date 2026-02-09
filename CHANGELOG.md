@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.7] - 2026-02-09
+### Fixed
+- **Critical Crash**: Fixed `this.onEventCallback is not a function` error by adding safe checks and legacy support.
+- **Legacy Compatibility**: Added `listenMqtt(callback)` method to fully support legacy style bots.
+- **MQTT Connection**: Resolved "Connection refused" by strictly enforcing compatible headers (`Origin: https://www.facebook.com`) and capabilities (`3`).
+
 ## [1.4.6] - 2026-02-09
 ### Fixed
 - Replaced MQTT connection stream builder with `websocket-stream` for maximum compatibility.

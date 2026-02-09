@@ -5,6 +5,7 @@ export declare class MQTTClient {
     private eventCallback;
     private perfMgr;
     private syncToken;
+    getSyncToken(): string | null;
     private capabilities;
     private sessionID;
     constructor(ctx: ApiCtx, callback: (event: any) => void);

@@ -9,21 +9,23 @@ const websocket_stream_1 = __importDefault(require("websocket-stream"));
 const https_proxy_agent_1 = require("https-proxy-agent");
 const constants_1 = require("../utils/constants");
 const PerformanceManager_1 = require("../utils/PerformanceManager");
-const crypto_1 = require("crypto");
 const Logger_1 = require("../utils/Logger");
 class MQTTClient {
+    getSyncToken() {
+        return this.syncToken;
+    }
     constructor(ctx, callback) {
         this.client = null;
         this.syncToken = null;
-        this.capabilities = constants_1.MQTT_CAPABILITIES.VOIP | constants_1.MQTT_CAPABILITIES.VIDEO | constants_1.MQTT_CAPABILITIES.AUDIO | constants_1.MQTT_CAPABILITIES.STICKER | constants_1.MQTT_CAPABILITIES.GIF | constants_1.MQTT_CAPABILITIES.TYPING; // Realistic capabilities
+        this.capabilities = 3;
         this.ctx = ctx;
         this.eventCallback = callback;
         this.perfMgr = PerformanceManager_1.PerformanceManager.getInstance();
-        this.sessionID = parseInt((0, crypto_1.randomBytes)(6).toString('hex'), 16);
+        this.sessionID = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     }
     connect() {
         // Generate a real 64-bit equivalent random session ID
-        const sessionID = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+        const sessionID = this.sessionID;
         const deviceID = this.ctx.clientID;
         // Construct the MQTT username payload required by Facebook
         const username = JSON.stringify({
@@ -45,12 +47,10 @@ class MQTTClient {
             rc: 0,
             a: this.ctx.userAgent || this.ctx.globalOptions?.userAgent || constants_1.USER_AGENTS[0]
         });
-        // Use static clientId as seen in ws3-fca
+        // Use static clientId
         const clientId = 'mqttwsclient';
-        // Host construction logic from ws3-fca
+        // Host construction logic
         let host = constants_1.MQTT_BROKER_URL;
-        // Note: ws3-fca appends params to host for websocket stream, but options.wsOptions.headers.Host must be just hostname
-        // We construct the full URL for websocket-stream
         const mqttUrl = `${host}?sid=${sessionID}&cid=${deviceID}`;
         const options = {
             clientId: clientId,
@@ -61,24 +61,24 @@ class MQTTClient {
             wsOptions: {
                 headers: {
                     'Cookie': this.ctx.jar.map(c => `${c.key}=${c.value}`).join('; '),
-                    'Origin': 'https://www.messenger.com',
+                    'Origin': 'https://www.facebook.com',
                     'User-Agent': this.ctx.userAgent || this.ctx.globalOptions?.userAgent || constants_1.USER_AGENTS[0],
-                    'Referer': 'https://www.messenger.com/',
+                    'Referer': 'https://www.facebook.com/',
                     'Host': new URL(host).hostname
                 },
-                origin: 'https://www.messenger.com',
+                origin: 'https://www.facebook.com',
                 protocolVersion: 13,
                 binaryType: 'arraybuffer'
-            }, // Cast to any because mqtt types don't include binaryType in wsOptions
+            },
             keepalive: 10,
             reschedulePings: true,
             connectTimeout: 60000,
-            reconnectPeriod: 1000,
+            reconnectPeriod: 3000,
         };
         if (this.ctx.globalOptions?.proxy) {
             options.wsOptions.agent = new https_proxy_agent_1.HttpsProxyAgent(this.ctx.globalOptions.proxy);
         }
-        // Exact replica of ws3-fca client creation using websocket-stream
+        // Exact replica of stream creation using websocket-stream
         this.client = new mqtt_1.default.Client(() => (0, websocket_stream_1.default)(mqttUrl, options.wsOptions), options);
         this.client.on('connect', () => {
             Logger_1.logger.success('MQTT Connected');

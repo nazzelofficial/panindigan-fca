@@ -11,7 +11,8 @@ export declare class PanindiganClient {
     private formatter;
     constructor(options?: ApiOption);
     login(loginOptions?: LoginOptions): Promise<void>;
-    private startListening;
+    startListening(): void;
+    listenMqtt(callback: (err: any, event: any) => void): void;
     on(callback: (event: any) => void): void;
     uploadAttachment(attachment: string | fs.ReadStream | Buffer): Promise<string[]>;
     sendMessage(threadId: string, message: string | SendMessageOptions): Promise<any>;

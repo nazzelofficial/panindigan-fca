@@ -99,22 +99,44 @@ class PanindiganClient {
         if (!this.ctx)
             return;
         this.mqtt = new mqtt_1.MQTTClient(this.ctx, (event) => {
-            if (this.onEventCallback) {
-                if (event.type === 'message' && event.delta) {
-                    const formatted = this.formatter?.format(event.delta);
-                    if (formatted) {
-                        this.onEventCallback(formatted);
+            if (typeof this.onEventCallback === 'function') {
+                try {
+                    if (event.type === 'message' && event.delta) {
+                        const formatted = this.formatter?.format(event.delta);
+                        if (formatted) {
+                            this.onEventCallback(null, formatted);
+                        }
+                    }
+                    else if (event.type === 'mqtt_error') {
+                        this.onEventCallback(event.error, null);
+                    }
+                    else {
+                        this.onEventCallback(null, event);
                     }
                 }
-                else {
-                    this.onEventCallback(event);
+                catch (e) {
+                    Logger_1.logger.error('Error in event callback:', e);
                 }
             }
         });
         this.mqtt.connect();
     }
-    on(callback) {
+    listenMqtt(callback) {
         this.onEventCallback = callback;
+        if (!this.mqtt || !this.mqtt.getStatus()) {
+            this.startListening();
+        }
+    }
+    on(callback) {
+        // Adapter for legacy .on method to match (err, event) signature
+        this.onEventCallback = (err, event) => {
+            if (err)
+                return; // Legacy .on usually just wants events? Or maybe we should log error?
+            callback(event);
+        };
+        if (!this.mqtt || !this.mqtt.getStatus()) {
+            this.startListening();
+        }
     }
     async uploadAttachment(attachment) {
         if (!this.ctx)

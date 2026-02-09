@@ -16,7 +16,7 @@ export class PanindiganClient {
   private mqtt: MQTTClient | null = null;
   private autoRefresh: AutoRefresh | null = null;
   private options: ApiOption;
-  private onEventCallback: ((event: any) => void) | null = null;
+  private onEventCallback: ((err: any, event: any) => void) | null = null;
   private msgQueue: MessageQueue;
   private perfMgr: PerformanceManager;
   private formatter: Formatter | null = null;
@@ -67,25 +67,45 @@ export class PanindiganClient {
     }
   }
 
-  private startListening() {
+  public startListening() {
     if (!this.ctx) return;
     this.mqtt = new MQTTClient(this.ctx, (event) => {
-      if (this.onEventCallback) {
-        if (event.type === 'message' && event.delta) {
-            const formatted = this.formatter?.format(event.delta);
-            if (formatted) {
-                this.onEventCallback(formatted);
-            }
-        } else {
-            this.onEventCallback(event);
+      if (typeof this.onEventCallback === 'function') {
+        try {
+          if (event.type === 'message' && event.delta) {
+              const formatted = this.formatter?.format(event.delta);
+              if (formatted) {
+                  this.onEventCallback(null, formatted);
+              }
+          } else if (event.type === 'mqtt_error') {
+             this.onEventCallback(event.error, null);
+          } else {
+              this.onEventCallback(null, event);
+          }
+        } catch (e) {
+          logger.error('Error in event callback:', e as Error);
         }
       }
     });
     this.mqtt.connect();
   }
 
-  public on(callback: (event: any) => void) {
+  public listenMqtt(callback: (err: any, event: any) => void) {
     this.onEventCallback = callback;
+    if (!this.mqtt || !this.mqtt.getStatus()) {
+        this.startListening();
+    }
+  }
+
+  public on(callback: (event: any) => void) {
+    // Adapter for legacy .on method to match (err, event) signature
+    this.onEventCallback = (err, event) => {
+        if (err) return; // Legacy .on usually just wants events? Or maybe we should log error?
+        callback(event);
+    };
+    if (!this.mqtt || !this.mqtt.getStatus()) {
+        this.startListening();
+    }
   }
 
   public async uploadAttachment(attachment: string | fs.ReadStream | Buffer): Promise<string[]> {
