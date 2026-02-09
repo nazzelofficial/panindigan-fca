@@ -8,6 +8,7 @@ export declare class PanindiganClient {
     private onEventCallback;
     private msgQueue;
     private perfMgr;
+    private formatter;
     constructor(options?: ApiOption);
     login(loginOptions?: LoginOptions): Promise<void>;
     private startListening;

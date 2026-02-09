@@ -53,7 +53,7 @@ export class MQTTClient {
     });
 
     const options: mqtt.IClientOptions = {
-      clientId: MQTT_CONFIG.CLIENT_ID,
+      clientId: 'mqttwsclient:' + deviceID,
       protocolId: MQTT_CONFIG.PROTOCOL_NAME,
       protocolVersion: MQTT_CONFIG.PROTOCOL_LEVEL,
       username: username,
@@ -64,13 +64,14 @@ export class MQTTClient {
           'Origin': FACEBOOK_URL,
           'User-Agent': this.ctx.globalOptions?.userAgent || USER_AGENTS[0],
           'Referer': FACEBOOK_URL + '/',
+          'x-msgr-region': 'FRC', // Hint region
         },
         origin: FACEBOOK_URL
       },
       keepalive: this.ctx.globalOptions?.autoRefresh?.mqttKeepAliveInterval || MQTT_CONFIG.KEEP_ALIVE_DEFAULT,
       reschedulePings: true,
       connectTimeout: MQTT_CONFIG.CONNECT_TIMEOUT,
-      reconnectPeriod: MQTT_CONFIG.RECONNECT_PERIOD, // Reconnect every 3s if failed
+      reconnectPeriod: MQTT_CONFIG.RECONNECT_PERIOD,
     };
 
     this.client = mqtt.connect(MQTT_BROKER_URL, options);

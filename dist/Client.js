@@ -43,6 +43,7 @@ const autoRefresh_1 = require("./utils/autoRefresh");
 const utils_1 = require("./utils/utils");
 const MessageQueue_1 = require("./utils/MessageQueue");
 const PerformanceManager_1 = require("./utils/PerformanceManager");
+const Formatter_1 = require("./utils/Formatter");
 const fs = __importStar(require("fs"));
 const form_data_1 = __importDefault(require("form-data"));
 const constants_1 = require("./utils/constants");
@@ -53,6 +54,7 @@ class PanindiganClient {
         this.mqtt = null;
         this.autoRefresh = null;
         this.onEventCallback = null;
+        this.formatter = null;
         this.options = options;
         this.msgQueue = new MessageQueue_1.MessageQueue();
         this.perfMgr = PerformanceManager_1.PerformanceManager.getInstance();
@@ -88,6 +90,7 @@ class PanindiganClient {
             this.autoRefresh = new autoRefresh_1.AutoRefresh(this.ctx, this.options);
             this.autoRefresh.start();
         }
+        this.formatter = new Formatter_1.Formatter(this.ctx);
         if (this.options.listenEvents) {
             this.startListening();
         }
@@ -97,7 +100,15 @@ class PanindiganClient {
             return;
         this.mqtt = new mqtt_1.MQTTClient(this.ctx, (event) => {
             if (this.onEventCallback) {
-                this.onEventCallback(event);
+                if (event.type === 'message' && event.delta) {
+                    const formatted = this.formatter?.format(event.delta);
+                    if (formatted) {
+                        this.onEventCallback(formatted);
+                    }
+                }
+                else {
+                    this.onEventCallback(event);
+                }
             }
         });
         this.mqtt.connect();

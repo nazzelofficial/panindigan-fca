@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.3] - 2026-02-09
+### Fixed
+- Fixed MQTT disconnection loop by ensuring unique `clientId` for each session.
+- Fixed `listenMqtt` compatibility by formatting raw deltas into `ws3-fca` compatible event objects.
+- Added `x-msgr-region` header to MQTT connection for better stability.
+
 ## [1.4.2] - 2026-02-09
 
 ### Fixed

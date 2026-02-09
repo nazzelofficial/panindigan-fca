@@ -5,6 +5,7 @@ import { AutoRefresh } from './utils/autoRefresh';
 import { parseGraphQLBatch, parseGraphQLBatchMap } from './utils/utils';
 import { MessageQueue } from './utils/MessageQueue';
 import { PerformanceManager } from './utils/PerformanceManager';
+import { Formatter } from './utils/Formatter';
 import * as fs from 'fs';
 import FormData from 'form-data';
 import { HEADERS, ERROR_MESSAGES, GRAPHQL_DOC_IDS } from './utils/constants';
@@ -18,6 +19,7 @@ export class PanindiganClient {
   private onEventCallback: ((event: any) => void) | null = null;
   private msgQueue: MessageQueue;
   private perfMgr: PerformanceManager;
+  private formatter: Formatter | null = null;
 
   constructor(options: ApiOption = {}) {
     this.options = options;
@@ -58,6 +60,8 @@ export class PanindiganClient {
       this.autoRefresh.start();
     }
 
+    this.formatter = new Formatter(this.ctx);
+
     if (this.options.listenEvents) {
       this.startListening();
     }
@@ -67,7 +71,14 @@ export class PanindiganClient {
     if (!this.ctx) return;
     this.mqtt = new MQTTClient(this.ctx, (event) => {
       if (this.onEventCallback) {
-        this.onEventCallback(event);
+        if (event.type === 'message' && event.delta) {
+            const formatted = this.formatter?.format(event.delta);
+            if (formatted) {
+                this.onEventCallback(formatted);
+            }
+        } else {
+            this.onEventCallback(event);
+        }
       }
     });
     this.mqtt.connect();
