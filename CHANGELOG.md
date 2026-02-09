@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.5] - 2026-02-09
+### Fixed
+- Fully aligned MQTT connection logic with `ws3-fca` for maximum compatibility.
+- Updated MQTT Broker URL to `wss://edge-chat.messenger.com/chat`.
+- Added required query parameters (`sid`, `cid`) to MQTT connection URL.
+- Added `User-Agent` to MQTT username payload (required for security validation).
+- Updated `Origin` and `Referer` headers to `messenger.com`.
+
 ## [1.4.4] - 2026-02-09
 ### Fixed
 - Fixed critical MQTT disconnection loop by shortening `clientId` to comply with MQTT 3.1 protocol limits (< 23 chars).

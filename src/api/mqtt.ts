@@ -23,11 +23,6 @@ export class MQTTClient {
 
   public connect() {
     // Generate a real 64-bit equivalent random session ID
-    // JavaScript Numbers are doubles, so we use string or BigInt to be safe, but MQTT often takes a number.
-    // However, FB's session ID is usually a large random integer.
-    // Let's use a safe large random integer within JS safe integer range (2^53 - 1) which is often sufficient,
-    // or generate a random string ID if the protocol supports it.
-    // For FB MQTT, it expects a number.
     const sessionID = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     
     const deviceID = this.ctx.clientID;
@@ -49,13 +44,15 @@ export class MQTTClient {
       dc: '',
       no_auto_fg: MQTT_CONFIG.NO_AUTO_FG,
       p_device_id: deviceID,
-      rc: 0
+      rc: 0,
+      a: this.ctx.userAgent || this.ctx.globalOptions?.userAgent || USER_AGENTS[0]
     });
 
-    // Generate a short, unique ClientID compliant with MQTT 3.1 (< 23 chars)
-    // Format: mqttwsclient-xxxxxx (12 + 1 + 6 = 19 chars)
-    const shortId = Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
-    const clientId = 'mqttwsclient-' + shortId;
+    // Use static clientId as seen in ws3-fca
+    const clientId = 'mqttwsclient';
+    
+    // Construct URL with query parameters required by Messenger MQTT
+    const mqttUrl = `${MQTT_BROKER_URL}?sid=${sessionID}&cid=${deviceID}`;
 
     const options: mqtt.IClientOptions = {
       clientId: clientId,
@@ -66,11 +63,12 @@ export class MQTTClient {
       wsOptions: {
         headers: {
           'Cookie': this.ctx.jar.map(c => `${c.key}=${c.value}`).join('; '),
-          'Origin': FACEBOOK_URL,
+          'Origin': 'https://www.messenger.com',
           'User-Agent': this.ctx.userAgent || this.ctx.globalOptions?.userAgent || USER_AGENTS[0],
-          'Referer': FACEBOOK_URL + '/',
+          'Referer': 'https://www.messenger.com/',
+          'Host': new URL(MQTT_BROKER_URL).hostname
         },
-        origin: FACEBOOK_URL
+        origin: 'https://www.messenger.com'
       },
       keepalive: this.ctx.globalOptions?.autoRefresh?.mqttKeepAliveInterval || MQTT_CONFIG.KEEP_ALIVE_DEFAULT,
       reschedulePings: true,
@@ -78,7 +76,7 @@ export class MQTTClient {
       reconnectPeriod: MQTT_CONFIG.RECONNECT_PERIOD,
     };
 
-    this.client = mqtt.connect(MQTT_BROKER_URL, options);
+    this.client = mqtt.connect(mqttUrl, options);
 
     this.client.on('connect', () => {
       logger.success('MQTT Connected');
