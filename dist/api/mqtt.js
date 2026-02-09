@@ -70,10 +70,10 @@ class MQTTClient {
                 protocolVersion: 13,
                 binaryType: 'arraybuffer'
             }, // Cast to any because mqtt types don't include binaryType in wsOptions
-            keepalive: 10, // ws3-fca uses 10 explicitly
+            keepalive: 10,
             reschedulePings: true,
-            connectTimeout: 60000, // ws3-fca uses 60000
-            reconnectPeriod: 1000, // ws3-fca uses 1000
+            connectTimeout: 60000,
+            reconnectPeriod: 1000,
         };
         if (this.ctx.globalOptions?.proxy) {
             options.wsOptions.agent = new https_proxy_agent_1.HttpsProxyAgent(this.ctx.globalOptions.proxy);
