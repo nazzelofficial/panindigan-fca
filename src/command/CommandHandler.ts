@@ -28,7 +28,8 @@ export class CommandHandler extends EventEmitter {
     super();
     this.client = client;
     this.options = {
-      prefixes: ['!'],
+      prefixes: [],
+      caseSensitive: false,
       ownerIds: [],
       adminIds: [],
       ignoreBots: true,
@@ -150,25 +151,46 @@ export class CommandHandler extends EventEmitter {
   public async handleMessage(message: Message) {
     if (!message.body) return;
     
+    const body = message.body.trim();
+    logger.debug(`[CommandHandler] Checking message: "${body}" from ${message.senderId}`);
+
     // 1. Check Prefix
     let prefix = '';
-    const body = message.body.trim();
+    const prefixes = this.options.prefixes || [];
     
-    for (const p of (this.options.prefixes || ['!'])) {
-      if (body.startsWith(p)) {
-        prefix = p;
-        break;
+    for (const p of prefixes) {
+      if (this.options.caseSensitive) {
+          if (body.startsWith(p)) {
+              prefix = p;
+              break;
+          }
+      } else {
+          if (body.toLowerCase().startsWith(p.toLowerCase())) {
+              // Use the actual characters from body that matched the prefix length
+              prefix = body.slice(0, p.length);
+              break;
+          }
       }
     }
 
-    if (!prefix) return;
+    if (!prefix) {
+        // If no prefix matched, allow the command handler to process the message as a potential command
+        // This supports "custom messenger bot" behavior where commands can be triggered without prefixes
+        prefix = '';
+    }
+
+    // logger.debug(`[CommandHandler] Matched prefix: "${prefix}"`);
 
     // 2. Parse Command Name and Args
     // Remove prefix
     const content = body.slice(prefix.length).trim();
     // Split by space first to get command name
     const firstSpace = content.indexOf(' ');
-    const commandName = (firstSpace === -1 ? content : content.slice(0, firstSpace)).toLowerCase();
+    
+    let commandName = (firstSpace === -1 ? content : content.slice(0, firstSpace));
+    if (!this.options.caseSensitive) {
+        commandName = commandName.toLowerCase();
+    }
     
     // Parse args from the rest
     const argsString = firstSpace === -1 ? '' : content.slice(firstSpace + 1);
@@ -178,8 +200,19 @@ export class CommandHandler extends EventEmitter {
 
     // 3. Find Command
     let command = this.commands.get(commandName);
+    if (!command && !this.options.caseSensitive) {
+         // If case insensitive, map keys might be lowercase (register uses lowerCase)
+         // But let's ensure we check aliases too
+         command = this.commands.get(commandName.toLowerCase());
+    }
+
     if (!command) {
-      const alias = this.aliases.get(commandName);
+      // Check aliases
+      let alias = this.aliases.get(commandName);
+      if (!alias && !this.options.caseSensitive) {
+           alias = this.aliases.get(commandName.toLowerCase());
+      }
+
       if (alias) {
         command = this.commands.get(alias);
       }
@@ -189,43 +222,46 @@ export class CommandHandler extends EventEmitter {
     
     logger.info(`[CommandHandler] Matched command: ${command.name}`);
 
-    // 4. Check Permissions
-    if (command.permissionLevel) {
-      const hasPerm = this.permissions.hasPermission(message.senderId, command.permissionLevel);
-      if (!hasPerm) {
-        this.emit('commandPermission', command, command.permissionLevel, { client: this.client, message, args, body, prefix });
-        if (this.options.permissionMessage) {
-          await this.client.sendMessage(message.threadId, this.options.permissionMessage);
-        } else {
-            await this.client.sendMessage(message.threadId, `❌ You need permission level ${command.permissionLevel} to use this command.`);
-        }
-        return;
-      }
-    }
-
-    // 5. Check Cooldowns
-    if (command.cooldown) {
-      const remaining = this.cooldowns.checkCooldown(command.name, message.senderId);
-      if (remaining) {
-        this.emit('commandCooldown', command, remaining, { client: this.client, message, args, body, prefix });
-        if (this.options.cooldownMessage) {
-             await this.client.sendMessage(message.threadId, this.options.cooldownMessage.replace('{time}', remaining.toString()));
-        } else {
-             await this.client.sendMessage(message.threadId, `⏳ Please wait ${remaining}s before using ${command.name} again.`);
-        }
-        return;
-      }
-      this.cooldowns.setCooldown(command.name, message.senderId, command.cooldown);
-    }
-
-    // 6. Build Context
+    // 4. Build Context
     const ctx: CommandContext = {
       client: this.client,
       message: message,
       args: args,
       body: body,
-      prefix: prefix
+      prefix: prefix,
+      reply: async (text) => {
+          return this.client.sendMessage(message.threadId, text);
+      }
     };
+
+    // 5. Check Permissions
+    if (command.permissionLevel) {
+      const hasPerm = this.permissions.hasPermission(message.senderId, command.permissionLevel);
+      if (!hasPerm) {
+        this.emit('commandPermission', command, command.permissionLevel, ctx);
+        if (this.options.permissionMessage) {
+          await ctx.reply(this.options.permissionMessage);
+        } else {
+            await ctx.reply(`❌ You need permission level ${command.permissionLevel} to use this command.`);
+        }
+        return;
+      }
+    }
+
+    // 6. Check Cooldowns
+    if (command.cooldown) {
+      const remaining = this.cooldowns.checkCooldown(command.name, message.senderId);
+      if (remaining) {
+        this.emit('commandCooldown', command, remaining, ctx);
+        if (this.options.cooldownMessage) {
+             await ctx.reply(this.options.cooldownMessage.replace('{time}', remaining.toString()));
+        } else {
+             await ctx.reply(`⏳ Please wait ${remaining}s before using ${command.name} again.`);
+        }
+        return;
+      }
+      this.cooldowns.setCooldown(command.name, message.senderId, command.cooldown);
+    }
 
     // 7. Execute Middleware Chain + Command
     try {

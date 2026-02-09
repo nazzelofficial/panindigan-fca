@@ -18,12 +18,18 @@ class MQTTClient {
         this.client = null;
         this.syncToken = null;
         this.capabilities = 3;
+        this.isConnecting = false;
         this.ctx = ctx;
         this.eventCallback = callback;
         this.perfMgr = PerformanceManager_1.PerformanceManager.getInstance();
         this.sessionID = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     }
     connect() {
+        if (this.isConnecting || (this.client && this.client.connected)) {
+            Logger_1.logger.warn('MQTT Client is already connecting or connected.');
+            return;
+        }
+        this.isConnecting = true;
         // Generate a real 64-bit equivalent random session ID
         const sessionID = this.sessionID;
         const deviceID = this.ctx.clientID;
@@ -81,8 +87,11 @@ class MQTTClient {
         // Exact replica of stream creation using websocket-stream
         this.client = new mqtt_1.default.Client(() => (0, websocket_stream_1.default)(mqttUrl, options.wsOptions), options);
         this.client.on('connect', () => {
+            this.isConnecting = false;
             Logger_1.logger.success('MQTT Connected');
             Logger_1.logger.info(`MQTT Session ID: ${sessionID}`);
+            Logger_1.logger.info(`MQTT Broker: ${host}`);
+            Logger_1.logger.info(`MQTT Region: ${options.wsOptions.headers['x-msgr-region'] || 'Global'}`);
             this.perfMgr.recordRequest(0, 0, 0, false); // Record connection event
             this.subscribe();
         });
@@ -90,11 +99,13 @@ class MQTTClient {
             this.handleMessage(topic, message);
         });
         this.client.on('error', (err) => {
+            this.isConnecting = false;
             Logger_1.logger.error('MQTT Error:', err);
             this.perfMgr.recordRequest(0, 0, 0, true); // Record error
             this.eventCallback({ type: 'mqtt_error', error: err });
         });
         this.client.on('close', () => {
+            this.isConnecting = false;
             Logger_1.logger.warn('MQTT Disconnected');
         });
         this.client.on('reconnect', () => {

@@ -1,5 +1,5 @@
 import { PanindiganClient } from '../Client';
-import { Message } from '../types';
+import { Message, SendMessageOptions } from '../types';
 export type PermissionLevel = 'USER' | 'ADMIN' | 'OWNER';
 export interface CommandContext {
     client: PanindiganClient;
@@ -7,6 +7,7 @@ export interface CommandContext {
     args: string[];
     body: string;
     prefix: string;
+    reply: (text: string | SendMessageOptions) => Promise<any>;
 }
 export interface CommandOptions {
     name: string;
@@ -23,6 +24,7 @@ export interface Command extends CommandOptions {
 }
 export interface CommandHandlerOptions {
     prefixes?: string[];
+    caseSensitive?: boolean;
     ownerIds?: string[];
     adminIds?: string[];
     ignoreBots?: boolean;

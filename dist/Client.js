@@ -99,6 +99,8 @@ class PanindiganClient {
     startListening() {
         if (!this.ctx)
             return;
+        if (this.mqtt && (this.mqtt.getStatus() || this.mqtt.isConnecting))
+            return;
         this.mqtt = new mqtt_1.MQTTClient(this.ctx, (event) => {
             if (typeof this.onEventCallback === 'function') {
                 try {
@@ -109,9 +111,15 @@ class PanindiganClient {
                         }
                     }
                     else if (event.type === 'mqtt_error') {
+                        // Explicitly stringify the error object to avoid [object Object] in logs
+                        const errorMsg = event.error && typeof event.error === 'object'
+                            ? JSON.stringify(event.error, Object.getOwnPropertyNames(event.error), 2)
+                            : event.error;
+                        Logger_1.logger.error('[Panindigan] Dispatching MQTT Error:', errorMsg);
                         this.onEventCallback(event.error, null);
                     }
                     else {
+                        // logger.debug('[Panindigan] Dispatching Event:', event.type);
                         this.onEventCallback(null, event);
                     }
                 }
@@ -128,7 +136,7 @@ class PanindiganClient {
             return;
         }
         this.onEventCallback = callback;
-        if (!this.mqtt || !this.mqtt.getStatus()) {
+        if (!this.mqtt || (!this.mqtt.getStatus() && !this.mqtt.isConnecting)) {
             this.startListening();
         }
     }
@@ -164,7 +172,7 @@ class PanindiganClient {
                 callback(event);
             }
         };
-        if (!this.mqtt || !this.mqtt.getStatus()) {
+        if (!this.mqtt || (!this.mqtt.getStatus() && !this.mqtt.isConnecting)) {
             this.startListening();
         }
     }

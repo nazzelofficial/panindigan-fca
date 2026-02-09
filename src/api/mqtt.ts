@@ -19,6 +19,8 @@ export class MQTTClient {
   private capabilities: number = 3;
   private sessionID: number;
 
+  public isConnecting: boolean = false;
+
   constructor(ctx: ApiCtx, callback: (event: any) => void) {
     this.ctx = ctx;
     this.eventCallback = callback;
@@ -27,6 +29,12 @@ export class MQTTClient {
   }
 
   public connect() {
+    if (this.isConnecting || (this.client && this.client.connected)) {
+        logger.warn('MQTT Client is already connecting or connected.');
+        return;
+    }
+    this.isConnecting = true;
+
     // Generate a real 64-bit equivalent random session ID
     const sessionID = this.sessionID;
     
@@ -92,8 +100,11 @@ export class MQTTClient {
     this.client = new mqtt.Client(() => websocket(mqttUrl, options.wsOptions), options);
 
     this.client.on('connect', () => {
+      this.isConnecting = false;
       logger.success('MQTT Connected');
       logger.info(`MQTT Session ID: ${sessionID}`);
+      logger.info(`MQTT Broker: ${host}`);
+      logger.info(`MQTT Region: ${options.wsOptions.headers['x-msgr-region'] || 'Global'}`);
       this.perfMgr.recordRequest(0, 0, 0, false); // Record connection event
       this.subscribe();
     });
@@ -103,12 +114,14 @@ export class MQTTClient {
     });
 
     this.client.on('error', (err) => {
+      this.isConnecting = false;
       logger.error('MQTT Error:', err);
       this.perfMgr.recordRequest(0, 0, 0, true); // Record error
       this.eventCallback({ type: 'mqtt_error', error: err });
     });
 
     this.client.on('close', () => {
+      this.isConnecting = false;
       logger.warn('MQTT Disconnected');
     });
     

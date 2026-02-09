@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.13] - 2026-02-10
+### Fixed
+- **Listen Error Logging**: Fixed `[object Object]` error logs by ensuring error objects are properly stringified before logging.
+- **Connection Stability**: Fixed duplicate MQTT connection attempts and potential disconnection loops by adding robust `isConnecting` state tracking in `Client` and `MQTTClient`.
+### Changed
+- **Command Handling**: Removed default `!` prefix enforcement. The `CommandHandler` now strictly respects the user-configured prefixes (defaulting to empty if none provided), allowing for natural language or custom prefix logic.
+### Added
+- **Log Detail**: Aligned MQTT logs, now including broker URL (`wss://edge.messenger.com/chat`) and region sequence details.
+
 ## [1.4.12] - 2026-02-09
 ### Fixed
 - **MQTT Error Logging**: Improved error handling to ensure error objects are properly logged instead of `[object Object]`.

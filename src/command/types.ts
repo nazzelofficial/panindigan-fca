@@ -1,5 +1,5 @@
 import { PanindiganClient } from '../Client';
-import { Message } from '../types';
+import { Message, SendMessageOptions } from '../types';
 
 export type PermissionLevel = 'USER' | 'ADMIN' | 'OWNER';
 
@@ -9,6 +9,7 @@ export interface CommandContext {
   args: string[];
   body: string; // Original body without prefix/command
   prefix: string;
+  reply: (text: string | SendMessageOptions) => Promise<any>;
 }
 
 export interface CommandOptions {
@@ -28,6 +29,7 @@ export interface Command extends CommandOptions {
 
 export interface CommandHandlerOptions {
   prefixes?: string[]; // Default: ['!']
+  caseSensitive?: boolean; // Default: false (command names are case insensitive)
   ownerIds?: string[];
   adminIds?: string[];
   ignoreBots?: boolean; // Ignore messages from other bots (if identifiable)

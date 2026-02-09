@@ -8,6 +8,7 @@ export declare class MQTTClient {
     getSyncToken(): string | null;
     private capabilities;
     private sessionID;
+    isConnecting: boolean;
     constructor(ctx: ApiCtx, callback: (event: any) => void);
     connect(): void;
     private subscribe;
