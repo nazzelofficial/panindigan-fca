@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.1] - 2026-02-09
+
+### Fixed
+- **User Information Retrieval**: Fixed `getUserInfo` returning "Unknown User" by migrating to GraphQL Batch API (`USER_INFO` doc id).
+- **Username Parsing**: Improved parsing logic to reliably extract names, short names, and usernames.
+- **Package Metadata**: Added missing `repository`, `homepage`, and `bugs` fields in `package.json` for better NPM integration.
+- **Publishing Workflow**: Added `prepublishOnly` script and file whitelist to ensure only necessary files are published.
+
+### Added
+- **Internal Helper**: Added `parseGraphQLBatchMap` utility for handling complex GraphQL batch responses.
+
 ## [1.4.0] - 2025-02-08
 
 ### Added

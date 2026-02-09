@@ -2,12 +2,12 @@ import { LoginOptions, ApiOption, SendMessageOptions, Thread, User, Message } fr
 import { login, ApiCtx } from './auth';
 import { MQTTClient } from './api/mqtt';
 import { AutoRefresh } from './utils/autoRefresh';
-import { parseGraphQLBatch } from './utils/utils';
+import { parseGraphQLBatch, parseGraphQLBatchMap } from './utils/utils';
 import { MessageQueue } from './utils/MessageQueue';
 import { PerformanceManager } from './utils/PerformanceManager';
 import * as fs from 'fs';
 import FormData from 'form-data';
-import { HEADERS, ERROR_MESSAGES } from './utils/constants';
+import { HEADERS, ERROR_MESSAGES, GRAPHQL_DOC_IDS } from './utils/constants';
 import { logger } from './utils/Logger';
 
 export class PanindiganClient {
@@ -193,30 +193,42 @@ export class PanindiganClient {
 
     if (!this.ctx) throw new Error('Not logged in');
     
-    // Use legacy endpoint for user info
-    // Format: https://www.facebook.com/chat/user_info/?ids[0]=123&ids[1]=456
-    let url = '/chat/user_info/?';
+    // Use GraphQL Batch for user info
+    const queries: Record<string, any> = {};
     userIds.forEach((id, i) => {
-      url += `ids[${i}]=${id}&`;
+      queries[`u${i}`] = {
+        doc_id: GRAPHQL_DOC_IDS.USER_INFO,
+        query_params: {
+          id: id
+        }
+      };
     });
-    url += 'json=1';
 
-    const res = await this.ctx.req.get(url);
-    // Response format: { profiles: { [id]: { name, ... } } }
-    const profiles = res.data.payload?.profiles || {};
+    const form = {
+      fb_dtsg: this.ctx.fb_dtsg,
+      jazoest: this.ctx.ttstamp,
+      queries: JSON.stringify(queries)
+    };
 
-    const result = userIds.map(id => {
-      const p = profiles[id] || {};
+    const res = await this.ctx.req.post('/api/graphqlbatch/', form);
+    const responseMap = parseGraphQLBatchMap(res.data);
+
+    const result = userIds.map((id, i) => {
+      const data = responseMap[`u${i}`];
+      // Structure: { user: { name, gender, url, profile_picture: { uri } } }
+      // Or { profile: { ... } } depending on the query
+      const p = data?.user || data?.profile || {};
+      
       return {
         id,
         name: p.name || 'Unknown User',
-        firstName: p.firstName,
-        vanity: p.vanity,
-        thumbSrc: p.thumbSrc,
-        profileUrl: p.uri || `https://www.facebook.com/${id}`,
+        firstName: p.short_name || p.name?.split(' ')[0],
+        vanity: p.vanity || p.username,
+        thumbSrc: p.profile_picture?.uri,
+        profileUrl: p.url || `https://www.facebook.com/${id}`,
         gender: p.gender,
-        type: p.type,
-        isFriend: p.is_friend,
+        type: p.type || 'user',
+        isFriend: p.is_viewer_friend,
         isBirthday: p.is_birthday
       };
     });

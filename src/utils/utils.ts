@@ -39,3 +39,23 @@ export function parseGraphQLBatch(response: string): any[] {
   }
   return results;
 }
+
+export function parseGraphQLBatchMap(response: string): Record<string, any> {
+  const results: Record<string, any> = {};
+  const lines = response.split('\n');
+  for (const line of lines) {
+    if (line.startsWith('{')) {
+      try {
+        const data = JSON.parse(line);
+        for (const key in data) {
+           if (data[key] && data[key].data) {
+             results[key] = data[key].data;
+           }
+        }
+      } catch (e) {
+        // Ignore
+      }
+    }
+  }
+  return results;
+}

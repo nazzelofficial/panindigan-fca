@@ -5,6 +5,7 @@ exports.generateOfflineThreadingID = generateOfflineThreadingID;
 exports.formatCookie = formatCookie;
 exports.getFrom = getFrom;
 exports.parseGraphQLBatch = parseGraphQLBatch;
+exports.parseGraphQLBatchMap = parseGraphQLBatchMap;
 const uuid_1 = require("uuid");
 function getGUID() {
     return (0, uuid_1.v4)();
@@ -39,6 +40,26 @@ function parseGraphQLBatch(response) {
             }
             catch (e) {
                 // Ignore parse errors for keep-alive lines
+            }
+        }
+    }
+    return results;
+}
+function parseGraphQLBatchMap(response) {
+    const results = {};
+    const lines = response.split('\n');
+    for (const line of lines) {
+        if (line.startsWith('{')) {
+            try {
+                const data = JSON.parse(line);
+                for (const key in data) {
+                    if (data[key] && data[key].data) {
+                        results[key] = data[key].data;
+                    }
+                }
+            }
+            catch (e) {
+                // Ignore
             }
         }
     }
