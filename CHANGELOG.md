@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.8] - 2026-02-09
+### Fixed
+- **MQTT Authentication**: Updated `FACEBOOK_APP_ID` to Messenger Web standard (`219994525426954`) to resolve "Connection refused" errors.
+- **Dependency Compatibility**: Downgraded `mqtt` to `4.3.7` to ensure literal protocol compatibility with legacy implementations.
+- **Connection Stability**: Verified `websocket-stream` integration with `mqtt` v4 for stable persistent connections.
+
 ## [1.4.7] - 2026-02-09
 ### Fixed
 - **Critical Crash**: Fixed `this.onEventCallback is not a function` error by adding safe checks and legacy support.

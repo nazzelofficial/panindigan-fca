@@ -26,7 +26,7 @@ exports.HEADERS = {
     'DNT': '1'
 };
 exports.MQTT_BROKER_URL = 'wss://edge-chat.messenger.com/chat';
-exports.FACEBOOK_APP_ID = 464891386855067;
+exports.FACEBOOK_APP_ID = 219994525426954;
 exports.MQTT_CONFIG = {
     PROTOCOL_NAME: 'MQIsdp',
     PROTOCOL_LEVEL: 3,

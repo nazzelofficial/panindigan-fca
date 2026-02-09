@@ -17,7 +17,7 @@ export declare const HEADERS: {
     DNT: string;
 };
 export declare const MQTT_BROKER_URL = "wss://edge-chat.messenger.com/chat";
-export declare const FACEBOOK_APP_ID = 464891386855067;
+export declare const FACEBOOK_APP_ID = 219994525426954;
 export declare const MQTT_CONFIG: {
     readonly PROTOCOL_NAME: "MQIsdp";
     readonly PROTOCOL_LEVEL: 3;

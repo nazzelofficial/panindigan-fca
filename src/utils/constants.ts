@@ -26,7 +26,7 @@ export const HEADERS = {
 };
 
 export const MQTT_BROKER_URL = 'wss://edge-chat.messenger.com/chat';
-export const FACEBOOK_APP_ID = 464891386855067;
+export const FACEBOOK_APP_ID = 219994525426954;
 
 export const MQTT_CONFIG = {
   PROTOCOL_NAME: 'MQIsdp',
