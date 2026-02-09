@@ -126,6 +126,7 @@ class PanindiganClient {
                             threadID: event.data.thread,
                             senderID: String(event.data.sender_fbid) // Alias for compatibility
                         };
+                        Logger_1.logger.debug('[Panindigan] Dispatching TYP event:', JSON.stringify(formattedTyping));
                         this.onEventCallback(null, formattedTyping);
                     }
                     else if (event.type === 'presence') {

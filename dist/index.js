@@ -16,7 +16,3 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 Object.defineProperty(exports, "__esModule", { value: true });
 __exportStar(require("./types"), exports);
 __exportStar(require("./Client"), exports);
-__exportStar(require("./command/types"), exports);
-__exportStar(require("./command/CommandHandler"), exports);
-__exportStar(require("./command/PermissionGuard"), exports);
-__exportStar(require("./command/CooldownManager"), exports);

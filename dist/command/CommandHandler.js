@@ -45,7 +45,7 @@ class CommandHandler extends events_1.EventEmitter {
         super();
         this.client = client;
         this.options = {
-            prefixes: [],
+            prefixes: ['!', '/'],
             caseSensitive: false,
             ownerIds: [],
             adminIds: [],

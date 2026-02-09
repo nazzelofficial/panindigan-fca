@@ -174,11 +174,11 @@ class MQTTClient {
                 this.eventCallback({ type: 'typ', data });
             }
             else if (topic === constants_1.MQTT_TOPICS.PRESENCE) {
-                Logger_1.logger.info('Processing Presence:', data);
+                Logger_1.logger.info('Processing Presence:', JSON.stringify(data));
                 this.eventCallback({ type: 'presence', data });
             }
             else {
-                Logger_1.logger.info('Processing Other MQTT Event:', data);
+                Logger_1.logger.info('Processing Other MQTT Event:', JSON.stringify(data));
                 this.eventCallback({ type: 'mqtt_event', topic, data });
             }
         }

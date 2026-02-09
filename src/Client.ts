@@ -89,14 +89,15 @@ export class PanindiganClient {
              this.onEventCallback(event.error, null);
           } else if (event.type === 'typ') {
               const formattedTyping = {
-                  type: 'typ',
-                  isTyping: event.data.state === 1,
-                  from: String(event.data.sender_fbid),
-                  threadID: event.data.thread,
-                  senderID: String(event.data.sender_fbid) // Alias for compatibility
-              };
-              this.onEventCallback(null, formattedTyping);
-          } else if (event.type === 'presence') {
+                        type: 'typ',
+                        isTyping: event.data.state === 1,
+                        from: String(event.data.sender_fbid),
+                        threadID: event.data.thread,
+                        senderID: String(event.data.sender_fbid) // Alias for compatibility
+                    };
+                    logger.debug('[Panindigan] Dispatching TYP event:', JSON.stringify(formattedTyping));
+                    this.onEventCallback(null, formattedTyping);
+                } else if (event.type === 'presence') {
               const formattedPresence = {
                   type: 'presence',
                   timestamp: Date.now(),

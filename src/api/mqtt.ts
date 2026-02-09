@@ -194,10 +194,10 @@ export class MQTTClient {
         logger.info('Processing Typing/Notification:', JSON.stringify(data));
         this.eventCallback({ type: 'typ', data });
       } else if (topic === MQTT_TOPICS.PRESENCE) {
-        logger.info('Processing Presence:', data);
+        logger.info('Processing Presence:', JSON.stringify(data));
         this.eventCallback({ type: 'presence', data });
       } else {
-        logger.info('Processing Other MQTT Event:', data);
+        logger.info('Processing Other MQTT Event:', JSON.stringify(data));
         this.eventCallback({ type: 'mqtt_event', topic, data });
       }
 

@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.18] - 2026-02-10
+### Removed
+- **Architecture**: Aligned with standard FCA library architecture. Removed `CommandHandler`, `PermissionGuard`, and `CooldownManager`.
+
+## [1.4.17] - 2026-02-10
+### Changed
+- **Prefix Configuration**: Removed default `!` and `/` prefixes to give users full control. Multi-prefix support remains available via `prefixes` option.
+
+## [1.4.16] - 2026-02-10
+### Fixed
+- **Log Formatting**: Ensured all MQTT event logs are properly stringified to eliminate `[object Object]` entries.
+- **Listen Error Safety**: Added defensive checks and debug logging for `typ` event dispatching to prevent "Listen error".
+- **Default Prefixes**: Restored default prefixes `['!', '/']` in `CommandHandler` to ensure out-of-the-box compatibility with common bot commands like `!help`.
+
 ## [1.4.15] - 2026-02-10
 ### Fixed
 - **Event Formatting**: Added standard FCA formatting for `typ` (typing) and `presence` events to fix compatibility with existing bot commands.
