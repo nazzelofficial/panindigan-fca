@@ -7,6 +7,34 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.5] - 2026-07-10
+
+### Fixed
+
+#### AuthManager bootstrap diagnostics - Generic "AppState may be expired" error
+- Root cause: The `AuthManager.bootstrap()` method threw a generic `InvalidAppStateError` with message "AppState may be expired" whenever token extraction failed, without distinguishing between different failure scenarios (expired AppState, checkpoint, login approval, rate limit, HTML structure changes, malformed AppState). This made debugging difficult for users.
+- Added specific error detection methods to distinguish failure types:
+  - `checkForRateLimit()` - Detects Facebook rate limiting via HTML patterns
+  - `checkForLoginApproval()` - Detects login approval requirements
+  - `checkForExpiredSession()` - Detects session expiration messages
+  - `determineTokenExtractionFailure()` - Analyzes HTML to determine specific failure reason
+- Added new error types for specific scenarios:
+  - `LoginApprovalRequiredError` - For login approval requirements
+  - `FacebookRateLimitError` - For Facebook rate limiting (distinct from HTTP rate limit errors)
+  - `HtmlStructureChangedError` - For HTML structure changes
+- Enhanced `checkForCheckpoint()` to emit `account:checkpoint` event before throwing
+- Updated `bootstrap()` to run all detection checks in order of specificity and provide actionable error messages
+- Enhanced token extraction with additional regex patterns in `extractDtsgFromHtml()` for better DTSG token detection
+- Added new event types for diagnostics:
+  - `AccountRateLimitedEvent` - Emitted when rate limiting is detected
+  - `AccountApprovalRequiredEvent` - Emitted when login approval is required
+  - `AccountSessionExpiredEvent` - Emitted when session expiration is detected
+- Added comprehensive regression tests with mocked Facebook responses covering all failure scenarios
+- Ensured error contexts do not expose sensitive cookie data (values are redacted)
+- Error messages now provide specific, actionable guidance instead of generic "AppState may be expired"
+
+---
+
 ## [0.1.4] - 2026-07-10
 
 ### Fixed

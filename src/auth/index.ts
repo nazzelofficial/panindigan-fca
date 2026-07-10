@@ -22,6 +22,9 @@ import {
   LoginFailedError,
   TwoFactorRequiredError,
   CheckpointRequiredError,
+  LoginApprovalRequiredError,
+  FacebookRateLimitError,
+  HtmlStructureChangedError,
 } from '../errors/index.js';
 import {
   FB_BASE_URL,
@@ -29,6 +32,10 @@ import {
   FB_LOGOUT_URL,
   CHECKPOINT_PATHS,
   SUSPENSION_INDICATORS,
+  RESTRICTION_INDICATORS,
+  RATE_LIMIT_INDICATORS,
+  LOGIN_APPROVAL_INDICATORS,
+  EXPIRED_SESSION_INDICATORS,
 } from '../constants/index.js';
 
 export interface SessionTokens {
@@ -62,16 +69,22 @@ export class AuthManager {
     const resp = await this.http.get(`${FB_BASE_URL}/`, { skipRetry: false });
     const html = await resp.text();
 
+    // Check for specific failure conditions in order of specificity
     this.checkForCheckpoint(html);
     this.checkForSuspension(html);
+    this.checkForRateLimit(html);
+    this.checkForLoginApproval(html);
+    this.checkForExpiredSession(html);
 
     const dtsg = extractDtsgFromHtml(html);
     const lsd = extractLsdFromHtml(html);
 
     if (!dtsg || !lsd) {
+      // Determine why tokens are missing
+      const failureReason = this.determineTokenExtractionFailure(html, dtsg, lsd);
       throw new InvalidAppStateError(
-        'Failed to extract session tokens from Facebook — AppState may be expired',
-        { hasDtsg: !!dtsg, hasLsd: !!lsd },
+        `Failed to extract session tokens from Facebook — ${failureReason}`,
+        { hasDtsg: !!dtsg, hasLsd: !!lsd, failureReason },
       );
     }
 
@@ -146,6 +159,7 @@ export class AuthManager {
   private checkForCheckpoint(html: string): void {
     for (const path of CHECKPOINT_PATHS) {
       if (html.includes(path)) {
+        this.emitter.emit('account:checkpoint', { checkpointUrl: `${FB_BASE_URL}${path}`, reason: path });
         throw new CheckpointRequiredError(
           'Facebook requires identity verification',
           `${FB_BASE_URL}${path}`,
@@ -162,6 +176,69 @@ export class AuthManager {
         throw new SessionExpiredError('Facebook account has been suspended');
       }
     }
+  }
+
+  private checkForRateLimit(html: string): void {
+    const lower = html.toLowerCase();
+    for (const indicator of RATE_LIMIT_INDICATORS) {
+      if (lower.includes(indicator)) {
+        this.emitter.emit('account:rate_limited', { reason: indicator });
+        throw new FacebookRateLimitError('Facebook rate limit exceeded — please wait before retrying');
+      }
+    }
+  }
+
+  private checkForLoginApproval(html: string): void {
+    const lower = html.toLowerCase();
+    for (const indicator of LOGIN_APPROVAL_INDICATORS) {
+      if (lower.includes(indicator)) {
+        this.emitter.emit('account:approval_required', { reason: indicator });
+        throw new LoginApprovalRequiredError('Facebook requires login approval — check your email or Facebook app');
+      }
+    }
+  }
+
+  private checkForExpiredSession(html: string): void {
+    const lower = html.toLowerCase();
+    for (const indicator of EXPIRED_SESSION_INDICATORS) {
+      if (lower.includes(indicator)) {
+        this.emitter.emit('account:session_expired', { reason: indicator });
+        throw new SessionExpiredError('Facebook session has expired — export a fresh AppState from your browser');
+      }
+    }
+  }
+
+  private determineTokenExtractionFailure(html: string, dtsg: string | null, lsd: string | null): string {
+    // Check if HTML structure is completely different (no Facebook page at all)
+    if (!html.includes('facebook') && !html.includes('meta')) {
+      return 'HTML structure changed significantly or response is not a Facebook page';
+    }
+
+    // Check if we're on a login page (cookies are expired)
+    if (html.includes('login') && html.includes('email') && html.includes('password')) {
+      return 'AppState is expired — redirected to login page';
+    }
+
+    // Check if only one token is missing (partial HTML structure change)
+    if (dtsg && !lsd) {
+      return 'LSD token missing — Facebook may have changed HTML structure';
+    }
+    if (!dtsg && lsd) {
+      return 'DTSG token missing — Facebook may have changed HTML structure';
+    }
+
+    // Both tokens missing but page looks like Facebook
+    if (html.includes('DTSGInitialData') || html.includes('fb_dtsg')) {
+      return 'Token extraction regex patterns may need updating';
+    }
+
+    // Check if page has Facebook content but no tokens
+    if (html.includes('facebook') || html.includes('meta')) {
+      return 'AppState may be expired or Facebook HTML structure has changed';
+    }
+
+    // Generic fallback
+    return 'AppState may be expired or Facebook HTML structure has changed';
   }
 
   async refreshCookies(): Promise<void> {

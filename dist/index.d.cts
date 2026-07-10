@@ -186,6 +186,15 @@ interface AccountWarningEvent {
 interface AccountSuspendedEvent {
     reason: string;
 }
+interface AccountRateLimitedEvent {
+    reason: string;
+}
+interface AccountApprovalRequiredEvent {
+    reason: string;
+}
+interface AccountSessionExpiredEvent {
+    reason: string;
+}
 interface AccountHealthyEvent {
     checkedAt: Date;
 }
@@ -324,6 +333,9 @@ interface ClientEventMap {
     'account:restricted': [AccountRestrictedEvent];
     'account:warning': [AccountWarningEvent];
     'account:suspended': [AccountSuspendedEvent];
+    'account:rate_limited': [AccountRateLimitedEvent];
+    'account:approval_required': [AccountApprovalRequiredEvent];
+    'account:session_expired': [AccountSessionExpiredEvent];
     'account:healthy': [AccountHealthyEvent];
     'account:refresh': [AccountRefreshEvent];
     'account:stale': [AccountStaleEvent];
@@ -906,6 +918,10 @@ declare class AuthManager {
     private calcJazoest;
     private checkForCheckpoint;
     private checkForSuspension;
+    private checkForRateLimit;
+    private checkForLoginApproval;
+    private checkForExpiredSession;
+    private determineTokenExtractionFailure;
     refreshCookies(): Promise<void>;
     keepalive(): Promise<void>;
     getAppState(): Promise<AppStateCookie[]>;

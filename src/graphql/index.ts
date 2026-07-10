@@ -61,12 +61,17 @@ export function parseJsonResponse(text: string): unknown {
 }
 
 export function extractDtsgFromHtml(html: string): string | null {
+  // Try multiple patterns for DTSG token
   const match = html.match(/"DTSGInitialData"\s*,\s*\[\s*\]\s*,\s*\{"token"\s*:\s*"([^"]+)"/);
   if (match) return match[1] ?? null;
   const match2 = html.match(/fb_dtsg[^"]*value="([^"]+)"/);
   if (match2) return match2[1] ?? null;
   const match3 = html.match(/"dtsg"\s*:\s*\{"token"\s*:\s*"([^"]+)"/);
   if (match3) return match3[1] ?? null;
+  const match4 = html.match(/DTSGInit\.init\(\{"token"\s*:\s*"([^"]+)"\}\)/);
+  if (match4) return match4[1] ?? null;
+  const match5 = html.match(/"token"\s*:\s*"([^"]+)"\s*}\s*,\s*"DTSGInitialData"/);
+  if (match5) return match5[1] ?? null;
   return null;
 }
 

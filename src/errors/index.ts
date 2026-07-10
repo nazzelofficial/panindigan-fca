@@ -83,6 +83,24 @@ export class CheckpointRequiredError extends AuthError {
   }
 }
 
+export class LoginApprovalRequiredError extends AuthError {
+  constructor(message: string, context?: Record<string, unknown>, cause?: unknown) {
+    super(message, 'PFCA_APPROVAL_REQUIRED', context, cause);
+  }
+}
+
+export class FacebookRateLimitError extends AuthError {
+  constructor(message: string, context?: Record<string, unknown>, cause?: unknown) {
+    super(message, 'PFCA_FACEBOOK_RATE_LIMIT', context, cause);
+  }
+}
+
+export class HtmlStructureChangedError extends AuthError {
+  constructor(message: string, context?: Record<string, unknown>, cause?: unknown) {
+    super(message, 'PFCA_HTML_STRUCTURE_CHANGED', context, cause);
+  }
+}
+
 export class HttpError extends PandindiganError {
   constructor(
     message: string,

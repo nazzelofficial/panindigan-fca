@@ -150,6 +150,9 @@ export interface AccountCheckpointEvent { checkpointUrl: string; reason: string 
 export interface AccountRestrictedEvent { feature: string; until: Date }
 export interface AccountWarningEvent { message: string; source: string }
 export interface AccountSuspendedEvent { reason: string }
+export interface AccountRateLimitedEvent { reason: string }
+export interface AccountApprovalRequiredEvent { reason: string }
+export interface AccountSessionExpiredEvent { reason: string }
 export interface AccountHealthyEvent { checkedAt: Date }
 
 export interface AccountStaleEvent {
@@ -238,6 +241,9 @@ export interface ClientEventMap {
   'account:restricted': [AccountRestrictedEvent];
   'account:warning': [AccountWarningEvent];
   'account:suspended': [AccountSuspendedEvent];
+  'account:rate_limited': [AccountRateLimitedEvent];
+  'account:approval_required': [AccountApprovalRequiredEvent];
+  'account:session_expired': [AccountSessionExpiredEvent];
   'account:healthy': [AccountHealthyEvent];
   'account:refresh': [AccountRefreshEvent];
   'account:stale': [AccountStaleEvent];

@@ -106,6 +106,25 @@ var SUSPENSION_INDICATORS = [
   "account has been suspended",
   "account was disabled"
 ];
+var RATE_LIMIT_INDICATORS = [
+  "too many requests",
+  "rate limit exceeded",
+  "please try again later",
+  "you are temporarily blocked from performing this action"
+];
+var LOGIN_APPROVAL_INDICATORS = [
+  "login approval needed",
+  "approve this login",
+  "review recent login",
+  "was this you",
+  "unusual login attempt"
+];
+var EXPIRED_SESSION_INDICATORS = [
+  "session expired",
+  "please log in again",
+  "your session has expired",
+  "you need to log in to continue"
+];
 
 // src/logger/index.ts
 function buildRedactPaths() {
@@ -230,6 +249,16 @@ var CheckpointRequiredError = class extends AuthError {
     this.checkpointUrl = checkpointUrl;
   }
   checkpointUrl;
+};
+var LoginApprovalRequiredError = class extends AuthError {
+  constructor(message, context, cause) {
+    super(message, "PFCA_APPROVAL_REQUIRED", context, cause);
+  }
+};
+var FacebookRateLimitError = class extends AuthError {
+  constructor(message, context, cause) {
+    super(message, "PFCA_FACEBOOK_RATE_LIMIT", context, cause);
+  }
 };
 var HttpError = class extends PandindiganError {
   constructor(message, code, statusCode, context, cause) {
@@ -2683,6 +2712,10 @@ function extractDtsgFromHtml(html) {
   if (match2) return match2[1] ?? null;
   const match3 = html.match(/"dtsg"\s*:\s*\{"token"\s*:\s*"([^"]+)"/);
   if (match3) return match3[1] ?? null;
+  const match4 = html.match(/DTSGInit\.init\(\{"token"\s*:\s*"([^"]+)"\}\)/);
+  if (match4) return match4[1] ?? null;
+  const match5 = html.match(/"token"\s*:\s*"([^"]+)"\s*}\s*,\s*"DTSGInitialData"/);
+  if (match5) return match5[1] ?? null;
   return null;
 }
 function extractLsdFromHtml(html) {
@@ -2723,12 +2756,16 @@ var AuthManager = class {
     const html = await resp.text();
     this.checkForCheckpoint(html);
     this.checkForSuspension(html);
+    this.checkForRateLimit(html);
+    this.checkForLoginApproval(html);
+    this.checkForExpiredSession(html);
     const dtsg = extractDtsgFromHtml(html);
     const lsd = extractLsdFromHtml(html);
     if (!dtsg || !lsd) {
+      const failureReason = this.determineTokenExtractionFailure(html, dtsg, lsd);
       throw new InvalidAppStateError(
-        "Failed to extract session tokens from Facebook \u2014 AppState may be expired",
-        { hasDtsg: !!dtsg, hasLsd: !!lsd }
+        `Failed to extract session tokens from Facebook \u2014 ${failureReason}`,
+        { hasDtsg: !!dtsg, hasLsd: !!lsd, failureReason }
       );
     }
     const userId = getUserIdFromJar(this.jar);
@@ -2793,6 +2830,7 @@ var AuthManager = class {
   checkForCheckpoint(html) {
     for (const path of CHECKPOINT_PATHS) {
       if (html.includes(path)) {
+        this.emitter.emit("account:checkpoint", { checkpointUrl: `${FB_BASE_URL}${path}`, reason: path });
         throw new CheckpointRequiredError(
           "Facebook requires identity verification",
           `${FB_BASE_URL}${path}`
@@ -2808,6 +2846,54 @@ var AuthManager = class {
         throw new SessionExpiredError("Facebook account has been suspended");
       }
     }
+  }
+  checkForRateLimit(html) {
+    const lower = html.toLowerCase();
+    for (const indicator of RATE_LIMIT_INDICATORS) {
+      if (lower.includes(indicator)) {
+        this.emitter.emit("account:rate_limited", { reason: indicator });
+        throw new FacebookRateLimitError("Facebook rate limit exceeded \u2014 please wait before retrying");
+      }
+    }
+  }
+  checkForLoginApproval(html) {
+    const lower = html.toLowerCase();
+    for (const indicator of LOGIN_APPROVAL_INDICATORS) {
+      if (lower.includes(indicator)) {
+        this.emitter.emit("account:approval_required", { reason: indicator });
+        throw new LoginApprovalRequiredError("Facebook requires login approval \u2014 check your email or Facebook app");
+      }
+    }
+  }
+  checkForExpiredSession(html) {
+    const lower = html.toLowerCase();
+    for (const indicator of EXPIRED_SESSION_INDICATORS) {
+      if (lower.includes(indicator)) {
+        this.emitter.emit("account:session_expired", { reason: indicator });
+        throw new SessionExpiredError("Facebook session has expired \u2014 export a fresh AppState from your browser");
+      }
+    }
+  }
+  determineTokenExtractionFailure(html, dtsg, lsd) {
+    if (!html.includes("facebook") && !html.includes("meta")) {
+      return "HTML structure changed significantly or response is not a Facebook page";
+    }
+    if (html.includes("login") && html.includes("email") && html.includes("password")) {
+      return "AppState is expired \u2014 redirected to login page";
+    }
+    if (dtsg && !lsd) {
+      return "LSD token missing \u2014 Facebook may have changed HTML structure";
+    }
+    if (!dtsg && lsd) {
+      return "DTSG token missing \u2014 Facebook may have changed HTML structure";
+    }
+    if (html.includes("DTSGInitialData") || html.includes("fb_dtsg")) {
+      return "Token extraction regex patterns may need updating";
+    }
+    if (html.includes("facebook") || html.includes("meta")) {
+      return "AppState may be expired or Facebook HTML structure has changed";
+    }
+    return "AppState may be expired or Facebook HTML structure has changed";
   }
   async refreshCookies() {
     this.logger.info("Refreshing cookies", { tag: "AUTH" });

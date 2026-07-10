@@ -110,3 +110,25 @@ export const RESTRICTION_INDICATORS = [
   'temporarily restricted',
   'your account is restricted',
 ] as const;
+
+export const RATE_LIMIT_INDICATORS = [
+  'too many requests',
+  'rate limit exceeded',
+  'please try again later',
+  'you are temporarily blocked from performing this action',
+] as const;
+
+export const LOGIN_APPROVAL_INDICATORS = [
+  'login approval needed',
+  'approve this login',
+  'review recent login',
+  'was this you',
+  'unusual login attempt',
+] as const;
+
+export const EXPIRED_SESSION_INDICATORS = [
+  'session expired',
+  'please log in again',
+  'your session has expired',
+  'you need to log in to continue',
+] as const;
