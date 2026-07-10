@@ -11,6 +11,7 @@ import { MiddlewarePipeline, type Middleware } from '../middleware/index.js';
 import { HttpClient } from '../http/index.js';
 import { MqttClient } from '../mqtt/index.js';
 import { createAuthManager, type AuthManager, type SessionTokens } from '../auth/index.js';
+import { loadAppState } from '../auth/AppStateLoader.js';
 import { resolveJar, LibSqlSessionStore, SessionsModule } from '../sessions/index.js';
 import { MessagesModule } from '../messages/index.js';
 import { ThreadsModule } from '../threads/index.js';
@@ -28,8 +29,16 @@ import { FB_BASE_URL } from '../constants/index.js';
 import { ConfigurationError } from '../errors/index.js';
 
 export interface ClientOptions {
-  /** AppState cookies from a browser export. */
-  appState?: AppStateCookie[];
+  /**
+   * AppState — accepts a cookie array from a browser export, a JSON string,
+   * a Base64-encoded JSON string, a URL-encoded JSON string, a Buffer, or a
+   * file path to a JSON file. Input type is auto-detected; see AppStateLoader.
+   */
+  appState?: AppStateCookie[] | string | Buffer;
+  /** Explicit path to an AppState JSON file (alternative to `appState`). */
+  appStatePath?: string;
+  /** Logs a detailed diagnostic breakdown of AppState resolution when true. */
+  debugAppState?: boolean;
   /** Email/password credentials — AppState is strongly preferred. */
   credentials?: {
     email: string;
@@ -231,8 +240,17 @@ export class PandindiganClient {
    * Open the real-time MQTT/WebSocket connection to receive live events.
    * Must be called after {@link createClient} if you need real-time events.
    */
-  async connect(): Promise<void> {
+  async login(): Promise<void> {
     await this.mqtt.connect();
+  }
+
+  /**
+   * @deprecated Use {@link PandindiganClient.login} instead. `connect()` is
+   * kept as a backward-compatible alias and will be removed in a future
+   * major version.
+   */
+  async connect(): Promise<void> {
+    await this.login();
   }
 
   /**
@@ -293,7 +311,7 @@ export class PandindiganClient {
  *   console.log(`${event.senderName}: ${event.body}`);
  * });
  *
- * await client.connect();
+ * await client.login();
  * ```
  */
 /**
@@ -307,15 +325,6 @@ export const login = (options: ClientOptions = {}): Promise<PandindiganClient> =
   createClient(options);
 
 export async function createClient(options: ClientOptions = {}): Promise<PandindiganClient> {
-  if (!options.appState && !options.credentials) {
-    // Allow session restore without explicit appState/credentials
-    if (!options.session?.persistPath && !process.env['PFCA_SESSION_PERSIST_PATH']) {
-      throw new ConfigurationError(
-        'createClient requires either appState, credentials, or a session.persistPath to restore from',
-      );
-    }
-  }
-
   // ── Build config ─────────────────────────────────────────────────────────
   const rawOverrides: Record<string, unknown> = {};
   if (options.logLevel) rawOverrides['logLevel'] = options.logLevel;
@@ -346,6 +355,30 @@ export async function createClient(options: ClientOptions = {}): Promise<Pandind
 
   logger.info('Initializing panindigan-fca client', { tag: 'CLIENT' });
 
+  // ── AppState resolution — single centralized pipeline, see AppStateLoader ──
+  // Accepts a cookie array, JSON string, Base64 string, URL-encoded string,
+  // Buffer, or file path via `appState`/`appStatePath`, falling back through
+  // APPSTATE / APPSTATE_JSON / APPSTATE_BASE64 env vars and ./appstate.json.
+  // Explicit `options.appState` always wins; every downstream module (auth,
+  // session restore, background refresh) consumes this single result.
+  const appStateResult = loadAppState({
+    appState: options.appState,
+    appStatePath: options.appStatePath,
+    debugAppState: options.debugAppState,
+    logger,
+  });
+  const resolvedAppState: AppStateCookie[] | undefined = appStateResult.valid ? appStateResult.cookies : undefined;
+
+  if (!resolvedAppState && !options.credentials) {
+    // Allow session restore without explicit appState/credentials
+    if (!options.session?.persistPath && !process.env['PFCA_SESSION_PERSIST_PATH']) {
+      throw new ConfigurationError(
+        'createClient requires either appState, credentials, a session.persistPath to restore from, ' +
+          'or one of APPSTATE / APPSTATE_JSON / APPSTATE_BASE64 / ./appstate.json in the environment',
+      );
+    }
+  }
+
   // ── Single shared emitter — all subsystems share this instance ────────────
   const emitter = new TypedEventEmitter();
 
@@ -357,7 +390,7 @@ export async function createClient(options: ClientOptions = {}): Promise<Pandind
 
   // ── Session jar ──────────────────────────────────────────────────────────
   const { jar } = await resolveJar({
-    appState: options.appState,
+    appState: resolvedAppState,
     userId: options.userId,
     config,
     storage,
@@ -385,7 +418,7 @@ export async function createClient(options: ClientOptions = {}): Promise<Pandind
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   const auth = await createAuthManager({
-    appState: options.appState,
+    appState: resolvedAppState,
     credentials: options.credentials,
     jar,
     http,

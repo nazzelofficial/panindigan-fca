@@ -1467,8 +1467,16 @@ declare class DiagnosticsModule {
 }
 
 interface ClientOptions {
-    /** AppState cookies from a browser export. */
-    appState?: AppStateCookie[];
+    /**
+     * AppState — accepts a cookie array from a browser export, a JSON string,
+     * a Base64-encoded JSON string, a URL-encoded JSON string, a Buffer, or a
+     * file path to a JSON file. Input type is auto-detected; see AppStateLoader.
+     */
+    appState?: AppStateCookie[] | string | Buffer;
+    /** Explicit path to an AppState JSON file (alternative to `appState`). */
+    appStatePath?: string;
+    /** Logs a detailed diagnostic breakdown of AppState resolution when true. */
+    debugAppState?: boolean;
     /** Email/password credentials — AppState is strongly preferred. */
     credentials?: {
         email: string;
@@ -1611,6 +1619,12 @@ declare class PandindiganClient {
      * Open the real-time MQTT/WebSocket connection to receive live events.
      * Must be called after {@link createClient} if you need real-time events.
      */
+    login(): Promise<void>;
+    /**
+     * @deprecated Use {@link PandindiganClient.login} instead. `connect()` is
+     * kept as a backward-compatible alias and will be removed in a future
+     * major version.
+     */
     connect(): Promise<void>;
     /**
      * Gracefully disconnect — drains queued operations, sends MQTT DISCONNECT,
@@ -1634,7 +1648,7 @@ declare class PandindiganClient {
  *   console.log(`${event.senderName}: ${event.body}`);
  * });
  *
- * await client.connect();
+ * await client.login();
  * ```
  */
 /**
@@ -1646,6 +1660,53 @@ declare class PandindiganClient {
  */
 declare const login: (options?: ClientOptions) => Promise<PandindiganClient>;
 declare function createClient(options?: ClientOptions): Promise<PandindiganClient>;
+
+/**
+ * Single, centralized AppState loading pipeline.
+ *
+ * This is the ONLY module allowed to read files, parse JSON, decode Base64,
+ * decode URL-encoded strings, or read AppState-related environment variables.
+ * Every other module (client factory, auth manager, session restore, proxy
+ * auth, etc.) must consume {@link AppStateResult} produced here — never parse
+ * raw AppState input themselves.
+ */
+type AppStateInputType = 'array' | 'json' | 'base64' | 'urlencoded' | 'buffer' | 'file' | 'none';
+interface AppStateResult {
+    /** Human-readable origin of the loaded AppState, for logging/diagnostics. */
+    source: string;
+    inputType: AppStateInputType;
+    cookies: AppStateCookie[];
+    valid: boolean;
+    diagnostics: string[];
+}
+interface AppStateLoadOptions {
+    /**
+     * Accepts a cookie array, a JSON string, a Base64-encoded JSON string, a
+     * URL-encoded JSON string, a Buffer, or a file path — auto-detected.
+     */
+    appState?: AppStateCookie[] | string | Buffer;
+    /** Explicit path to an AppState JSON file. */
+    appStatePath?: string;
+    /** When true, logs a detailed diagnostic breakdown of the resolution. */
+    debugAppState?: boolean;
+    logger?: Pick<Logger, 'info' | 'debug' | 'warn'>;
+}
+/**
+ * Resolves the AppState to use for authentication using a single deterministic
+ * pipeline. Uses the first successful source and stops immediately:
+ *
+ * 1. `options.appState` (array, JSON string, Base64 string, URL-encoded string, Buffer, or file path)
+ * 2. `options.appStatePath`
+ * 3. `APPSTATE` / `PFCA_APPSTATE` environment variable
+ * 4. `APPSTATE_JSON` environment variable
+ * 5. `APPSTATE_BASE64` environment variable
+ * 6. `PFCA_APPSTATE_PATH` environment variable, or `./appstate.json` by default
+ *
+ * Never re-parses a source that already succeeded — each input is memoized by
+ * content, so repeated calls (session restore, reconnect, background refresh)
+ * reuse the same normalized cookies instead of re-reading disk or env vars.
+ */
+declare function loadAppState(options?: AppStateLoadOptions): AppStateResult;
 
 declare class PandindiganError extends Error {
     readonly code: string;
@@ -2867,4 +2928,4 @@ declare function parseThreadSearchResponse(text: string): ThreadSearchResponse;
 declare function parseUploadResponse(text: string): UploadResponse;
 declare function parseLoginResponse(text: string): LoginResponse;
 
-export { API_ENDPOINTS, type AccountCheckpointEvent, type AccountHealthyEvent, type AccountRefreshEvent, type AccountRefreshFailedEvent, type AccountRestrictedEvent, type AccountStaleEvent, type AccountSuspendedEvent, type AccountWarningEvent, type ApiEndpointName, type AppStateCookie, type AppStateRefreshFailedEvent, AttachmentSchema, AuthError, AuthManager, type BrowserFingerprint, CacheError, CacheManager, CheckpointRequiredError, type ClientEventMap, type ClientOptions, type Config, ConfigurationError, type ConnectedEvent, ConnectionError, type CreateGroupOptions, type CreatePollOptions, DNSError, DeserializationError, DiagnosticsModule, type DiagnosticsStats, type DisconnectedEvent, DownloadError, type DownloadOptions, type EndpointDefinition, type ErrorContext, FileStorageAdapter, FilesModule, ForbiddenError, type FormRequestOptions, type FriendListOptions, type FriendListResponse, FriendListResponseSchema, GRAPHQL_FRIENDLY_NAMES, type GraphQLBodyOptions, type HealthCheckResult, HttpClient, HttpError, type HttpMethod, type HttpRequestOptions, type HttpResponse, InvalidAppStateError, LibSqlSessionStore, LibSqlStorageAdapter, type LightspeedRequestOptions, type Logger, LoginFailedError, type LoginResponse, LoginResponseSchema, MemoryStorageAdapter, type Message, type MessageAttachment, type MessageDeliveredEvent, type MessageEvent, type MessageListResponse, MessageListResponseSchema, type MessageNode, MessageNodeSchema, type MessageReactionEvent, type MessageReactionRemovedEvent, type MessageSearchResponse, MessageSearchResponseSchema, type MessageSearchResult, type MessageSeenEvent, type MessageUnsendEvent, MessagesModule, type Middleware, type MultipartField, type MultipartFile, NetworkError, NotFoundError, PandindiganClient, PandindiganError, ParseError, type ParsedAttachment, type ParsedMessageSearchNode, type ParsedPollOption, type ParsedPresenceEntry, type ParsedThreadSearchNode, type ParsedUserProfile, type Poll, type PollOption, PollOptionSchema, type PollResponse, PollResponseSchema, PollsModule, PresenceEntrySchema, PresenceModule, type PresenceResponse, PresenceResponseSchema, type PresenceStatus, type PresenceUpdateEvent, type ProxyConfig, ProxyError, ProxyManager, type ProxyOptions, RateLimitError, type ReconnectFailedEvent, type ReconnectedEvent, type ReconnectingEvent, type ReplyOptions, type RequestContext, type RequestSpec, type ResponseContext, ResponseValidationError, SearchModule, type SearchOptions, type SearchUsersOptions, type SendMessageOptions, type SendMessageResponse, SendMessageResponseSchema, type SendMessageResult, type SendStickerOptions, type SendStickerResult, ServerError, SessionExpiredError, type SessionRestoredEvent, type SessionRow, type SessionSavedEvent, type SessionTokens, SessionsModule, StealthManager, type StickerMeta, type StickerPack, StickersModule, type StorageAdapter, StorageError, type Thread, type ThreadListOptions, type ThreadListResponse, ThreadListResponseSchema, type ThreadMutedEvent, type ThreadNode, ThreadNodeSchema, type ThreadParticipantAddedEvent, type ThreadParticipantRemovedEvent, type ThreadPhotoChangedEvent, type ThreadReadEvent, type ThreadRenamedEvent, type ThreadSearchResponse, ThreadSearchResponseSchema, type ThreadSearchResult, type ThreadTypingEvent, ThreadsModule, TimeoutError, TwoFactorRequiredError, TypedEventEmitter, UploadError, type UploadOptions, type UploadResponse, UploadResponseSchema, type UploadResult, type UserProfile, type UserProfileResponse, UserProfileResponseSchema, UserProfileSchema, UsersModule, type VotePollOptions, buildFormRequest as buildFormRequestBody, buildGraphQLBody, buildGraphQLRequest as buildGraphQLRequestBody, buildJsonBody, buildLightspeedBody, buildMultipartBody, buildStealthHeaders, clearDnsCache, createClient, createLogger, cryptoRandomFloat, cryptoRandomInt, decrypt, encodeFormBody, encrypt, exportJar, extractAttachmentId, generateBoundary, generateFingerprint, getEndpointUrl, getUserIdFromJar, hmac, humanDelay, hydrateJar, isGraphQLEndpoint, isMessageSendEndpoint, loadConfig, login, makeFormRequestSpec, makeMultipartRequestSpec, maskProxyUrl, nsKey, parseFriendListResponse, parseLoginResponse, parseMessageListResponse, parseMessageSearchResponse, parsePollResponse, parsePresenceResponse, parseRawResponse, parseSendMessageResponse, parseThreadListResponse, parseThreadSearchResponse, parseUploadResponse, parseUserProfileResponse, randomHex, resolveProxyUrl, resolveWithCache, stripFbPrefix, validate, validateAppState };
+export { API_ENDPOINTS, type AccountCheckpointEvent, type AccountHealthyEvent, type AccountRefreshEvent, type AccountRefreshFailedEvent, type AccountRestrictedEvent, type AccountStaleEvent, type AccountSuspendedEvent, type AccountWarningEvent, type ApiEndpointName, type AppStateCookie, type AppStateInputType, type AppStateLoadOptions, type AppStateRefreshFailedEvent, type AppStateResult, AttachmentSchema, AuthError, AuthManager, type BrowserFingerprint, CacheError, CacheManager, CheckpointRequiredError, type ClientEventMap, type ClientOptions, type Config, ConfigurationError, type ConnectedEvent, ConnectionError, type CreateGroupOptions, type CreatePollOptions, DNSError, DeserializationError, DiagnosticsModule, type DiagnosticsStats, type DisconnectedEvent, DownloadError, type DownloadOptions, type EndpointDefinition, type ErrorContext, FileStorageAdapter, FilesModule, ForbiddenError, type FormRequestOptions, type FriendListOptions, type FriendListResponse, FriendListResponseSchema, GRAPHQL_FRIENDLY_NAMES, type GraphQLBodyOptions, type HealthCheckResult, HttpClient, HttpError, type HttpMethod, type HttpRequestOptions, type HttpResponse, InvalidAppStateError, LibSqlSessionStore, LibSqlStorageAdapter, type LightspeedRequestOptions, type Logger, LoginFailedError, type LoginResponse, LoginResponseSchema, MemoryStorageAdapter, type Message, type MessageAttachment, type MessageDeliveredEvent, type MessageEvent, type MessageListResponse, MessageListResponseSchema, type MessageNode, MessageNodeSchema, type MessageReactionEvent, type MessageReactionRemovedEvent, type MessageSearchResponse, MessageSearchResponseSchema, type MessageSearchResult, type MessageSeenEvent, type MessageUnsendEvent, MessagesModule, type Middleware, type MultipartField, type MultipartFile, NetworkError, NotFoundError, PandindiganClient, PandindiganError, ParseError, type ParsedAttachment, type ParsedMessageSearchNode, type ParsedPollOption, type ParsedPresenceEntry, type ParsedThreadSearchNode, type ParsedUserProfile, type Poll, type PollOption, PollOptionSchema, type PollResponse, PollResponseSchema, PollsModule, PresenceEntrySchema, PresenceModule, type PresenceResponse, PresenceResponseSchema, type PresenceStatus, type PresenceUpdateEvent, type ProxyConfig, ProxyError, ProxyManager, type ProxyOptions, RateLimitError, type ReconnectFailedEvent, type ReconnectedEvent, type ReconnectingEvent, type ReplyOptions, type RequestContext, type RequestSpec, type ResponseContext, ResponseValidationError, SearchModule, type SearchOptions, type SearchUsersOptions, type SendMessageOptions, type SendMessageResponse, SendMessageResponseSchema, type SendMessageResult, type SendStickerOptions, type SendStickerResult, ServerError, SessionExpiredError, type SessionRestoredEvent, type SessionRow, type SessionSavedEvent, type SessionTokens, SessionsModule, StealthManager, type StickerMeta, type StickerPack, StickersModule, type StorageAdapter, StorageError, type Thread, type ThreadListOptions, type ThreadListResponse, ThreadListResponseSchema, type ThreadMutedEvent, type ThreadNode, ThreadNodeSchema, type ThreadParticipantAddedEvent, type ThreadParticipantRemovedEvent, type ThreadPhotoChangedEvent, type ThreadReadEvent, type ThreadRenamedEvent, type ThreadSearchResponse, ThreadSearchResponseSchema, type ThreadSearchResult, type ThreadTypingEvent, ThreadsModule, TimeoutError, TwoFactorRequiredError, TypedEventEmitter, UploadError, type UploadOptions, type UploadResponse, UploadResponseSchema, type UploadResult, type UserProfile, type UserProfileResponse, UserProfileResponseSchema, UserProfileSchema, UsersModule, type VotePollOptions, buildFormRequest as buildFormRequestBody, buildGraphQLBody, buildGraphQLRequest as buildGraphQLRequestBody, buildJsonBody, buildLightspeedBody, buildMultipartBody, buildStealthHeaders, clearDnsCache, createClient, createLogger, cryptoRandomFloat, cryptoRandomInt, decrypt, encodeFormBody, encrypt, exportJar, extractAttachmentId, generateBoundary, generateFingerprint, getEndpointUrl, getUserIdFromJar, hmac, humanDelay, hydrateJar, isGraphQLEndpoint, isMessageSendEndpoint, loadAppState, loadConfig, login, makeFormRequestSpec, makeMultipartRequestSpec, maskProxyUrl, nsKey, parseFriendListResponse, parseLoginResponse, parseMessageListResponse, parseMessageSearchResponse, parsePollResponse, parsePresenceResponse, parseRawResponse, parseSendMessageResponse, parseThreadListResponse, parseThreadSearchResponse, parseUploadResponse, parseUserProfileResponse, randomHex, resolveProxyUrl, resolveWithCache, stripFbPrefix, validate, validateAppState };

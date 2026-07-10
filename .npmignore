@@ -24,11 +24,8 @@ bunfig.toml
 .env.*
 
 # Git
-.git/
 .gitignore
-
-# Node modules
-node_modules/
+.editorconfig
 
 # Development directories
 memory/

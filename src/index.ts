@@ -12,6 +12,8 @@ export type { ClientOptions } from './client/index.js';
 // ─── AppState / cookies ───────────────────────────────────────────────────────
 export type { AppStateCookie } from './cookies/index.js';
 export { validateAppState, hydrateJar, exportJar, getUserIdFromJar } from './cookies/index.js';
+export type { AppStateResult, AppStateInputType, AppStateLoadOptions } from './auth/AppStateLoader.js';
+export { loadAppState } from './auth/AppStateLoader.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 export { loadConfig } from './config/index.js';

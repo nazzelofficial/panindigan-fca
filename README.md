@@ -3,6 +3,8 @@
 **TypeScript Library for Facebook Messenger Bots — Personal Accounts**
 
 [![npm version](https://img.shields.io/npm/v/panindigan-fca)](https://www.npmjs.com/package/panindigan-fca)
+[![npm downloads](https://img.shields.io/npm/dm/panindigan-fca.svg)](https://www.npmjs.com/package/panindigan-fca)
+[![npm total downloads](https://img.shields.io/npm/dt/panindigan-fca.svg)](https://www.npmjs.com/package/panindigan-fca)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8%2B-blue)](https://www.typescriptlang.org)
@@ -117,6 +119,51 @@ await client.messages.send({
 await client.disconnect();
 ```
 
+### AppState resolution (dev & production hosting)
+
+AppState loading goes through a single centralized pipeline (`AppStateLoader`) shared by
+`createClient`, `login`, session restore, and background refresh — every input type is
+auto-detected, validated once, and cached, so the same normalized AppState is reused
+everywhere. You don't have to pass `appState` explicitly or ship an `appstate.json` file;
+the first successful source below wins and no further sources are attempted:
+
+1. `options.appState` — a cookie array, a JSON string, a Base64-encoded JSON string, a
+   URL-encoded JSON string, a `Buffer`, or a file path. The input type is auto-detected.
+2. `options.appStatePath` — explicit path to an AppState JSON file.
+3. `APPSTATE` environment variable (legacy alias: `PFCA_APPSTATE`) — the AppState, in any
+   of the formats above, serialized as a string.
+4. `APPSTATE_JSON` environment variable — the AppState as a plain JSON string.
+5. `APPSTATE_BASE64` environment variable — the AppState as Base64-encoded JSON.
+6. `PFCA_APPSTATE_PATH` environment variable, or `./appstate.json` by default.
+7. Falls back to `credentials` or session restoration (`session.persistPath` /
+   configured storage adapter) when none of the above are set.
+
+Use env vars on hosting platforms where you inject secrets rather than committing a file
+(Replit Secrets, Docker `-e` flags, CI/CD secret stores, Railway/Render/Fly env vars,
+etc.); use `appstate.json` on disk for local development.
+
+```bash
+# .env (development) — nothing to set, ./appstate.json is picked up automatically
+
+# hosting/production — set the AppState JSON directly as a secret
+APPSTATE_JSON='[{"key":"c_user","value":"...","domain":"facebook.com","path":"/"}, ...]'
+
+# ...or Base64-encoded
+APPSTATE_BASE64='W3sia2V5IjoiY191c2VyIiwuLi59XQ=='
+```
+
+```ts
+import { createClient } from 'panindigan-fca';
+
+// No appState option needed — resolved automatically from APPSTATE_JSON /
+// APPSTATE_BASE64 (prod) or ./appstate.json (dev).
+const client = await createClient();
+await client.login();
+
+// Or enable a detailed diagnostic breakdown of how AppState was resolved:
+const debugClient = await createClient({ debugAppState: true });
+```
+
 ### Listen for Incoming Messages
 
 ```ts
@@ -136,7 +183,7 @@ client.on('thread:typing', (event) => {
   console.log(`${event.senderName} is typing in ${event.threadId}`);
 });
 
-await client.connect();
+await client.login();
 ```
 
 ### Fetch Threads
@@ -348,7 +395,7 @@ client.on('appstate:update', (updatedAppState) => {
   writeFileSync('./appstate.json', JSON.stringify(updatedAppState, null, 2));
 });
 
-await client.connect();
+await client.login();
 ```
 
 ### AppState Lifecycle
@@ -1201,8 +1248,8 @@ const [alice, bob] = await Promise.all([
   createClient({ appState: bobAppState,   userId: '100067890' }),
 ]);
 
-await alice.connect();
-await bob.connect();
+await alice.login();
+await bob.login();
 
 alice.on('message', (ev) => console.log(`[Alice] ${ev.senderName}: ${ev.body}`));
 bob.on('message',   (ev) => console.log(`[Bob]   ${ev.senderName}: ${ev.body}`));
@@ -1274,7 +1321,7 @@ client.on('message', async (event) => {
   await client.messages.send({ threadId: event.threadId, body: event.body });
 });
 
-await client.connect();
+await client.login();
 ```
 
 ### Command Router Bot
@@ -1299,7 +1346,7 @@ client.on('message', async (event) => {
   await client.messages.send({ threadId: event.threadId, body: response });
 });
 
-await client.connect();
+await client.login();
 ```
 
 ### Stale Session Auto-Alert
@@ -1320,7 +1367,7 @@ client.on('account:stale', async (ev) => {
   await client.disconnect();
 });
 
-await client.connect();
+await client.login();
 ```
 
 ### Auto-Responder with Keywords
@@ -1645,7 +1692,7 @@ Yes. Pass a `credentials` object to `createClient()`. However, AppState is stron
 No hard limit in the library. Each idle session consumes approximately 30–50 MB of heap. On a 2 GB RAM server, 20–30 concurrent sessions is typical.
 
 **Q: Can I use panindigan-fca in a serverless environment?**  
-The library is designed for long-running processes due to the persistent MQTT connection. For serverless, use the HTTP-only methods (`send`, `fetch`, `search`) without calling `client.connect()`.
+The library is designed for long-running processes due to the persistent MQTT connection. For serverless, use the HTTP-only methods (`send`, `fetch`, `search`) without calling `client.login()`.
 
 **Q: What happens if Facebook changes their internal API?**  
 `ResponseValidationError` will surface immediately (all responses are validated with Zod), rather than silently returning wrong data. A patch release will follow.
@@ -1698,7 +1745,7 @@ Measured on Node.js 22 LTS, Ubuntu 24.04 (4 vCPU / 8 GB RAM), `stealth.level: 'o
 |--------|--------|--------|
 | `createClient()` cold start | ~380 ms | < 2,000 ms |
 | `createClient()` with session restore | ~420 ms | < 2,000 ms |
-| `client.connect()` (MQTT handshake) | ~290 ms | — |
+| `client.login()` (MQTT handshake) | ~290 ms | — |
 
 ### Memory (Idle Session)
 
@@ -1729,6 +1776,10 @@ No environment variables are required. All values have built-in defaults and can
 |----------|---------|-------------|
 | `PFCA_LOG_LEVEL` | `info` | Minimum log level |
 | `PFCA_LOG_PRETTY` | `false` | Enable `pino-pretty` formatting |
+| `APPSTATE` | *(none)* | AppState (any supported format), serialized as a string. Legacy alias: `PFCA_APPSTATE` |
+| `APPSTATE_JSON` | *(none)* | AppState as a plain JSON string — for hosting/production secrets |
+| `APPSTATE_BASE64` | *(none)* | AppState as Base64-encoded JSON — for hosting/production secrets |
+| `PFCA_APPSTATE_PATH` | `./appstate.json` | Path to a local AppState JSON file — for development |
 | `PFCA_SESSION_PERSIST_PATH` | *(none)* | Path to persist session state to disk |
 | `PFCA_STORAGE_ADAPTER` | `libsql` | Storage adapter: `libsql` (remote API), `memory`, `file` |
 | `PFCA_STORAGE_API_URL` | `https://storage.panindigan.com/https://storage2.panindigan.com` | Base URL for remote storage API |

@@ -7,6 +7,28 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.1] - 2026-07-10
+
+### Added
+
+#### AppState loading — centralized, single-pipeline rewrite
+- New `src/auth/AppStateLoader.ts` — the single module allowed to read files, parse JSON, decode Base64/URL-encoding, read AppState environment variables, and validate/normalize cookies. `createClient` / `login` and every downstream consumer (auth manager, session restore/refresh, storage) now go through this one pipeline instead of duplicated ad-hoc logic.
+- `appState` now auto-detects its input type — a cookie array, a JSON string, a Base64-encoded JSON string, a URL-encoded JSON string, a `Buffer`, or a file path — with no extra flags required.
+- `appStatePath` client option — explicit path to an AppState JSON file, as an alternative to `appState`.
+- Environment variable resolution, in priority order (first success wins, no further sources are attempted): `options.appState` → `options.appStatePath` → `APPSTATE` (or legacy `PFCA_APPSTATE`) → `APPSTATE_JSON` → `APPSTATE_BASE64` → `PFCA_APPSTATE_PATH` or `./appstate.json`. Supports both local development (file-based) and hosting/production (env-var-based, e.g. Replit Secrets, Docker, CI/CD secret stores) without any configuration changes.
+- Per-content memoization — identical AppState input is parsed and validated exactly once per process; repeated resolution (reconnects, background refresh) reuses the cached, normalized result instead of re-reading disk or environment variables.
+- `debugAppState: true` client option — logs a detailed diagnostic breakdown (source, input type, cookie count, presence of `c_user`/`xs`, validation/cache status).
+- Accurate `[APPSTATE]` logging — reports the actual source and cookie count on success; only reports "not found" when the default `./appstate.json` lookup genuinely found nothing, eliminating false negatives when a valid AppState was already supplied via option or env var.
+- Actionable `ConfigurationError` / `InvalidAppStateError` messages for every failure mode: malformed JSON, failed Base64/URL decoding, missing `c_user`/`xs`, invalid cookie schema, unreadable file.
+- `loadAppState`, `AppStateResult`, `AppStateInputType`, and `AppStateLoadOptions` exported from the package root for advanced use.
+- 17 new unit tests covering array/JSON/Base64/URL-encoded/file inputs, missing-file handling, malformed JSON, missing `c_user`/`xs`, invalid schema, all three environment variables, option-over-env precedence, cache reuse, priority fallback, and repeated/concurrent load calls.
+
+### Changed
+
+#### Client login method
+- `PandindiganClient.connect()` renamed to `PandindiganClient.login()` — opens the real-time MQTT/WebSocket connection. `connect()` is kept as a deprecated backward-compatible alias that calls `login()` internally and will be removed in a future major version.
+- All README examples updated to use `client.login()`.
+
 ## [Unreleased]
 
 ### Changed

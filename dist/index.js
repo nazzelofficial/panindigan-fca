@@ -2947,6 +2947,191 @@ async function createAuthManager(options) {
   return manager;
 }
 
+// src/auth/AppStateLoader.ts
+import { existsSync as existsSync2, readFileSync } from "fs";
+var NO_APPSTATE = {
+  source: "none",
+  inputType: "none",
+  cookies: [],
+  valid: false,
+  diagnostics: ["No AppState source produced a value"]
+};
+var resultCache = /* @__PURE__ */ new Map();
+function cacheKeyFor(rawSource, raw) {
+  if (typeof raw === "string") return `${rawSource}:str:${raw}`;
+  if (Buffer.isBuffer(raw)) return `${rawSource}:buf:${raw.toString("base64")}`;
+  if (Array.isArray(raw)) return `${rawSource}:arr:${JSON.stringify(raw)}`;
+  return `${rawSource}:${String(raw)}`;
+}
+function tryParseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return void 0;
+  }
+}
+function looksLikeBase64(text) {
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(text) && text.length % 4 === 0 && text.length > 16;
+}
+function normalizeInput(source, raw, diagnostics) {
+  if (raw === void 0 || raw === null) return void 0;
+  if (typeof raw === "string" && raw.trim().length === 0) return void 0;
+  if (Array.isArray(raw) && raw.length === 0) return void 0;
+  const cacheKey = cacheKeyFor(source, raw);
+  const hit = resultCache.get(cacheKey);
+  if (hit) {
+    diagnostics.push(`${source}: served from cache (parsed once, reused)`);
+    return { ...hit, diagnostics: [...diagnostics] };
+  }
+  let inputType;
+  let cookies;
+  if (Array.isArray(raw)) {
+    inputType = "array";
+    cookies = raw;
+  } else if (Buffer.isBuffer(raw)) {
+    inputType = "buffer";
+    const text = raw.toString("utf8");
+    cookies = tryParseJson(text);
+    if (cookies === void 0) {
+      throw new ConfigurationError(`${source}: Buffer did not contain valid AppState JSON`);
+    }
+  } else {
+    const text = raw.trim();
+    const looksLikeAPath = !text.includes("[") && !text.includes("{") && !text.startsWith("%");
+    if (looksLikeAPath && existsSync2(text)) {
+      inputType = "file";
+      let fileContents;
+      try {
+        fileContents = readFileSync(text, "utf8");
+      } catch (err) {
+        throw new ConfigurationError(
+          `${source}: File does not exist or is not readable: ${text} (${err instanceof Error ? err.message : String(err)})`
+        );
+      }
+      cookies = tryParseJson(fileContents);
+      if (cookies === void 0) {
+        throw new ConfigurationError(`${source}: JSON parsing failed for file "${text}"`);
+      }
+    } else if (looksLikeAPath && !looksLikeBase64(text)) {
+      diagnostics.push(`${source}: File does not exist: ${text}`);
+      return void 0;
+    } else if (text.startsWith("[") || text.startsWith("{")) {
+      inputType = "json";
+      cookies = tryParseJson(text);
+      if (cookies === void 0) {
+        throw new ConfigurationError(`${source}: JSON parsing failed`);
+      }
+    } else if (text.startsWith("%")) {
+      inputType = "urlencoded";
+      let decoded;
+      try {
+        decoded = decodeURIComponent(text);
+      } catch (err) {
+        throw new ConfigurationError(
+          `${source}: URL decoding failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      cookies = tryParseJson(decoded);
+      if (cookies === void 0) {
+        throw new ConfigurationError(`${source}: JSON parsing failed after URL decoding`);
+      }
+    } else if (looksLikeBase64(text)) {
+      inputType = "base64";
+      let decoded;
+      try {
+        decoded = Buffer.from(text, "base64").toString("utf8");
+      } catch (err) {
+        throw new ConfigurationError(
+          `${source}: Base64 decoding failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      cookies = tryParseJson(decoded);
+      if (cookies === void 0) {
+        throw new ConfigurationError(`${source}: JSON parsing failed after Base64 decoding`);
+      }
+    } else {
+      throw new ConfigurationError(
+        `${source}: File does not exist: ${text}. AppState must be a cookie array, JSON string, Base64-encoded JSON, URL-encoded JSON, or a valid file path.`
+      );
+    }
+  }
+  let validated;
+  try {
+    validated = validateAppState(cookies);
+  } catch (err) {
+    if (err instanceof InvalidAppStateError) throw err;
+    throw new ConfigurationError(
+      `${source}: Invalid AppState format \u2014 ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  const result = {
+    source,
+    inputType,
+    cookies: validated,
+    valid: true,
+    diagnostics: [
+      ...diagnostics,
+      `${source}: loaded ${validated.length} cookie(s) as ${inputType}`
+    ]
+  };
+  resultCache.set(cacheKey, result);
+  return result;
+}
+function loadAppState(options = {}) {
+  const diagnostics = [];
+  const logger = options.logger;
+  const attempts = [
+    { label: "appState option", get: () => options.appState },
+    { label: "appStatePath option", get: () => options.appStatePath },
+    { label: "APPSTATE env var", get: () => process.env["APPSTATE"] ?? process.env["PFCA_APPSTATE"] },
+    { label: "APPSTATE_JSON env var", get: () => process.env["APPSTATE_JSON"] },
+    { label: "APPSTATE_BASE64 env var", get: () => process.env["APPSTATE_BASE64"] },
+    {
+      label: "appstate.json",
+      get: () => process.env["PFCA_APPSTATE_PATH"] ?? "./appstate.json"
+    }
+  ];
+  for (const attempt of attempts) {
+    const raw = attempt.get();
+    if (raw === void 0) continue;
+    if (attempt.label === "appstate.json") {
+      const path = raw;
+      if (!existsSync2(path)) {
+        diagnostics.push(`${attempt.label}: not found at "${path}"`);
+        continue;
+      }
+    }
+    const result = normalizeInput(attempt.label, raw, diagnostics);
+    if (!result) continue;
+    if (options.debugAppState) {
+      const lines = [
+        "[APPSTATE]",
+        `Source ............ ${result.source}`,
+        `Input Type ........ ${result.inputType}`,
+        `Cookies ........... ${result.cookies.length}`,
+        `Contains c_user ... ${result.cookies.some((c) => c.key === "c_user") ? "yes" : "no"}`,
+        `Contains xs ....... ${result.cookies.some((c) => c.key === "xs") ? "yes" : "no"}`,
+        "Validation ........ passed",
+        "Normalized ........ yes",
+        "Cache ............. created",
+        "Status ............ READY"
+      ];
+      (logger?.debug ?? console.debug)(lines.join("\n"));
+    } else {
+      logger?.info?.(
+        `[APPSTATE] Source: ${result.source} | Status: Loaded | Cookies: ${result.cookies.length}`,
+        { tag: "APPSTATE" }
+      );
+    }
+    return result;
+  }
+  logger?.warn?.("[APPSTATE] No valid AppState found from any configured source", {
+    tag: "APPSTATE",
+    diagnostics
+  });
+  return { ...NO_APPSTATE, diagnostics };
+}
+
 // src/sessions/index.ts
 import { CookieJar as CookieJar3 } from "tough-cookie";
 
@@ -4919,8 +5104,16 @@ var PandindiganClient = class {
    * Open the real-time MQTT/WebSocket connection to receive live events.
    * Must be called after {@link createClient} if you need real-time events.
    */
-  async connect() {
+  async login() {
     await this.mqtt.connect();
+  }
+  /**
+   * @deprecated Use {@link PandindiganClient.login} instead. `connect()` is
+   * kept as a backward-compatible alias and will be removed in a future
+   * major version.
+   */
+  async connect() {
+    await this.login();
   }
   /**
    * Gracefully disconnect — drains queued operations, sends MQTT DISCONNECT,
@@ -4959,13 +5152,6 @@ var PandindiganClient = class {
 };
 var login = (options = {}) => createClient(options);
 async function createClient(options = {}) {
-  if (!options.appState && !options.credentials) {
-    if (!options.session?.persistPath && !process.env["PFCA_SESSION_PERSIST_PATH"]) {
-      throw new ConfigurationError(
-        "createClient requires either appState, credentials, or a session.persistPath to restore from"
-      );
-    }
-  }
   const rawOverrides = {};
   if (options.logLevel) rawOverrides["logLevel"] = options.logLevel;
   if (options.logPretty !== void 0) rawOverrides["logPretty"] = options.logPretty;
@@ -4989,11 +5175,25 @@ async function createClient(options = {}) {
     bindings: { tag: "PFCA" }
   });
   logger.info("Initializing panindigan-fca client", { tag: "CLIENT" });
+  const appStateResult = loadAppState({
+    appState: options.appState,
+    appStatePath: options.appStatePath,
+    debugAppState: options.debugAppState,
+    logger
+  });
+  const resolvedAppState = appStateResult.valid ? appStateResult.cookies : void 0;
+  if (!resolvedAppState && !options.credentials) {
+    if (!options.session?.persistPath && !process.env["PFCA_SESSION_PERSIST_PATH"]) {
+      throw new ConfigurationError(
+        "createClient requires either appState, credentials, a session.persistPath to restore from, or one of APPSTATE / APPSTATE_JSON / APPSTATE_BASE64 / ./appstate.json in the environment"
+      );
+    }
+  }
   const emitter = new TypedEventEmitter();
   const storage = options.storage ?? await createStorageAdapter(config);
   const sessionStore = new LibSqlSessionStore();
   const { jar } = await resolveJar({
-    appState: options.appState,
+    appState: resolvedAppState,
     userId: options.userId,
     config,
     storage,
@@ -5008,7 +5208,7 @@ async function createClient(options = {}) {
   const http = new HttpClient(jar, config, stealth, pipeline2, logger, emitter);
   await http.init();
   const auth = await createAuthManager({
-    appState: options.appState,
+    appState: resolvedAppState,
     credentials: options.credentials,
     jar,
     http,
@@ -5930,6 +6130,7 @@ export {
   hydrateJar,
   isGraphQLEndpoint,
   isMessageSendEndpoint,
+  loadAppState,
   loadConfig,
   login,
   makeFormRequestSpec,

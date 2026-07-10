@@ -1,0 +1,4 @@
+
+# Local upload staging area; may contain secrets/cookies pasted for debugging — never commit
+attached_assets/
+appstate.json
