@@ -28,6 +28,7 @@ export type { StorageAdapter } from './storage/index.js';
 export { MemoryStorageAdapter } from './storage/index.js';
 export { FileStorageAdapter } from './storage/index.js';
 export { LibSqlStorageAdapter } from './storage/index.js';
+export type { StorageDiagnostics } from './storage/libsql.js';
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 export type { Middleware, RequestContext, ResponseContext, ErrorContext } from './middleware/index.js';

@@ -372,31 +372,33 @@ describe('core utility modules', () => {
     await expect(remote.get('expired')).resolves.toBeUndefined();
     expect(mockStorageApiClient.delete).toHaveBeenCalled();
     
-    // Test set error path
+    // Test set error path — v0.1.6: set() now queues the write silently instead of throwing,
+    // so the bot stays functional when storage is temporarily unavailable.
     mockStorageApiClient.set.mockRejectedValueOnce(new Error('set failed'));
-    await expect(remote.set('key', 'value')).rejects.toThrow(StorageError);
-    
-    // Test delete error path
+    await expect(remote.set('key', 'value')).resolves.toBeUndefined();
+
+    // Test delete error path — same: queued, not thrown.
     mockStorageApiClient.delete.mockRejectedValueOnce(new Error('delete failed'));
-    await expect(remote.delete('key')).rejects.toThrow(StorageError);
-    
-    // Test clear error path
+    await expect(remote.delete('key')).resolves.toBeUndefined();
+
+    // Test clear error path — clear is destructive and cannot be safely queued; it still throws.
     mockStorageApiClient.clear.mockRejectedValueOnce(new Error('clear failed'));
     await expect(remote.clear()).rejects.toThrow(StorageError);
-    
-    // Test bootstrap error path
+
+    // Test bootstrap error path — v0.1.6: bootstrap failure falls back to memory, never throws.
+    // Storage must never block Facebook login.
     mockStorageApiClient.health.mockRejectedValueOnce(new Error('bootstrap failed'));
     const failingRemote = new LibSqlStorageAdapter('https://example.com', 'token');
-    await expect(failingRemote.get('any')).rejects.toThrow(StorageError);
+    await expect(failingRemote.get('any')).resolves.toBeUndefined(); // memory fallback returns undefined
 
-    // Test close with error ignored (lines 110-114)
+    // Test close with error ignored
     mockStorageApiClient.clear.mockRejectedValueOnce(new Error('close failed'));
     await expect(remote.close()).resolves.toBeUndefined();
 
-    // Test JSON.parse error in get (lines 71-73)
+    // Test JSON.parse error in get — v0.1.6: falls back to memory cache instead of throwing.
     mockStorageApiClient.get.mockResolvedValueOnce({ found: true, value: 'invalid json', expiresAt: null } as any);
     const jsonErrorRemote = new LibSqlStorageAdapter('https://example.com', 'token');
-    await expect(jsonErrorRemote.get('key')).rejects.toThrow(StorageError);
+    await expect(jsonErrorRemote.get('key')).resolves.toBeUndefined(); // falls back to memory
   });
 
   it('covers file storage adapter error paths and expired entries', async () => {

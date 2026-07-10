@@ -367,10 +367,16 @@ interface ClientEventMap {
 declare class TypedEventEmitter extends EventEmitter<ClientEventMap> {
 }
 
+/**
+ * Extended logger interface — includes a `success` level for completed-operation
+ * messages, sitting between INFO (30) and WARN (40) at severity 35.
+ */
 interface Logger {
     trace(msg: string, ctx?: Record<string, unknown>): void;
     debug(msg: string, ctx?: Record<string, unknown>): void;
     info(msg: string, ctx?: Record<string, unknown>): void;
+    /** Indicates a successfully completed operation (severity 35, between INFO and WARN). */
+    success(msg: string, ctx?: Record<string, unknown>): void;
     warn(msg: string, ctx?: Record<string, unknown>): void;
     error(msg: string, ctx?: Record<string, unknown>): void;
     fatal(msg: string, ctx?: Record<string, unknown>): void;
@@ -384,10 +390,10 @@ declare function createLogger(options: {
 
 declare const configSchema: z.ZodObject<{
     logLevel: z.ZodDefault<z.ZodEnum<{
-        info: "info";
         fatal: "fatal";
         error: "error";
         warn: "warn";
+        info: "info";
         debug: "debug";
         trace: "trace";
     }>>;
@@ -548,13 +554,40 @@ declare class FileStorageAdapter implements StorageAdapter {
     close(): Promise<void>;
 }
 
+interface StorageDiagnostics {
+    /** 'remote' when connected, 'memory-fallback' when degraded. */
+    provider: string;
+    /** The primary remote endpoint URL. */
+    endpoint: string;
+    /** Current connection lifecycle state. */
+    connectionState: 'connecting' | 'connected' | 'fallback' | 'closed';
+    /** True when a secondary endpoint was used after the primary failed. */
+    failoverUsed: boolean;
+    /** True when operating in in-memory fallback mode. */
+    fallbackMode: boolean;
+    /** How long the initial health-check round-trip took (ms). */
+    bootstrapDurationMs: number;
+    /** Total number of retries issued to the remote API since startup. */
+    retryCount: number;
+    /** Number of writes queued for replay after reconnect. */
+    pendingWriteCount: number;
+    /** When the last background sync completed successfully. */
+    lastSyncAt: Date | null;
+    /** Human-readable message of the last storage error, if any. */
+    lastError: string | null;
+}
 /**
- * Remote storage adapter.
+ * Remote storage adapter backed by the panindigan.com storage API.
  *
- * Stores key-value pairs through a remote HTTPS storage API instead of
- * direct database connections. The remote worker handles all persistence,
- * encryption, and credential management. Supports per-entry TTL and
- * preserves the existing adapter interface for callers.
+ * Reliability contract:
+ * - Storage failures NEVER prevent Facebook login or client startup.
+ * - When the remote is unavailable, all operations fall through to an in-process
+ *   memory cache so the bot stays functional.
+ * - Pending writes are queued and replayed (with exponential back-off) as soon
+ *   as the remote comes back online.
+ * - Background sync runs every 30 s to attempt reconnection and replay.
+ * - `close()` does NOT wipe remote data — it flushes the pending queue and stops
+ *   background timers cleanly.
  *
  * @example
  * ```ts
@@ -566,17 +599,55 @@ declare class FileStorageAdapter implements StorageAdapter {
  */
 declare class LibSqlStorageAdapter implements StorageAdapter {
     private readonly client;
-    private readonly apiUrl;
+    /** In-memory fallback — also used as a write-through cache in connected mode. */
+    private readonly fallback;
+    /** True when the remote is unavailable and we're operating from memory. */
+    private fallbackMode;
+    private connectionState;
+    /** Writes that could not reach remote storage and are waiting for replay. */
+    private readonly pendingWrites;
+    /** Background timer that periodically reconnects and replays pending writes. */
+    private syncTimer;
+    /** Prevents concurrent replay runs from interleaving and reordering writes. */
+    private isSyncing;
+    private bootstrapDurationMs;
+    private failoverUsed;
+    private retryCount;
+    private lastSyncAt;
+    private lastError;
+    private readonly activeEndpoint;
+    private readonly logger?;
+    /**
+     * A promise that resolves once the bootstrap health-check completes (whether
+     * the remote was reachable or not). Awaited by `ensureReady()` so that the
+     * very first operation waits for the result of the health-check before deciding
+     * which path (remote or fallback) to use.
+     */
     private readonly ready;
-    constructor(baseUrl?: string, apiToken?: string);
+    constructor(baseUrl?: string, apiToken?: string, logger?: Logger);
     private bootstrap;
+    private startBackgroundSync;
+    private backgroundSync;
+    /**
+     * Replay the pending write queue in strict FIFO order.
+     *
+     * Ordering guarantee: we process the head of the queue one write at a time.
+     * On the first failure we stop immediately so that a later `set` can never
+     * land on the remote before an earlier `clear` that preceded it.
+     * Failed writes stay at the head of the queue and are retried on the next
+     * sync cycle.
+     */
+    private replayPendingWrites;
     private ensureReady;
+    private enqueuePendingWrite;
     get<T>(key: string): Promise<T | undefined>;
     set<T>(key: string, value: T, ttlMs?: number): Promise<void>;
     delete(key: string): Promise<void>;
     clear(): Promise<void>;
     has(key: string): Promise<boolean>;
     close(): Promise<void>;
+    /** Return a structured diagnostics snapshot for observability tooling. */
+    getDiagnostics(): StorageDiagnostics;
 }
 
 /**
@@ -824,6 +895,8 @@ declare class MqttClient {
     private isClosed;
     private _packetId;
     private nextPacketId;
+    private lastPingAt;
+    private lastPingLatencyMs;
     private reconnectAttempts;
     private activeBrokerIndex;
     private readonly reconnectStartTimes;
@@ -890,6 +963,7 @@ declare class MqttClient {
         reconnectCount: number;
         activeBroker: string;
         topicCount: number;
+        pingLatencyMs: number | null;
     };
     disconnect(): Promise<void>;
 }
@@ -942,19 +1016,25 @@ interface SessionRow {
 /**
  * Remote storage-backed session store.
  *
- * Manages session state through a remote HTTPS storage API.
- * The remote worker handles structured session operations including
- * user-id filtering, TTL management, and expiration cleanup.
+ * Manages session state through the remote Panindigan storage API.
+ *
+ * **Reliability contract:** a bootstrap failure (network unavailable, API down,
+ * wrong credentials) never prevents client startup. All operations degrade
+ * gracefully — saves are silently dropped and restores return `null` — so the
+ * bot can still authenticate and run in memory-only mode until the remote
+ * comes back online.
  *
  * @example
  * ```ts
  * const store = new LibSqlSessionStore();
  * await store.save('default', appState, { userId: '100012345' });
- * const { jar, appState } = await store.restore('default') ?? {};
+ * const result = await store.restore('default');
  * ```
  */
 declare class LibSqlSessionStore {
     private readonly client;
+    /** True when the bootstrap health-check failed — all ops are no-ops. */
+    private degradedMode;
     private readonly ready;
     constructor(baseUrl?: string, apiToken?: string);
     private bootstrap;
@@ -962,8 +1042,8 @@ declare class LibSqlSessionStore {
     /**
      * Save (insert or replace) a session.
      *
-     * @param id      — arbitrary session key, e.g. `'default'` or a Facebook user ID
-     * @param appState — validated array of AppState cookies
+     * @param id        — arbitrary session key, e.g. `'default'` or a Facebook user ID
+     * @param appState  — validated array of AppState cookies
      * @param opts.userId   — Facebook user ID to associate (optional)
      * @param opts.ttlMs    — time-to-live in milliseconds (optional)
      */
@@ -972,7 +1052,8 @@ declare class LibSqlSessionStore {
         ttlMs?: number;
     }): Promise<void>;
     /**
-     * Restore a session by id. Returns null if not found or expired.
+     * Restore a session by id. Returns `null` if not found, expired, or when in
+     * degraded mode.
      */
     restore(id: string): Promise<{
         jar: CookieJar;
@@ -981,18 +1062,20 @@ declare class LibSqlSessionStore {
     } | null>;
     /**
      * Fetch all non-expired sessions, optionally filtered by user_id.
+     * Returns an empty array in degraded mode.
      */
     list(userId?: string): Promise<SessionRow[]>;
     /**
-     * Delete a session by id.
+     * Delete a session by id. No-op in degraded mode.
      */
     delete(id: string): Promise<void>;
     /**
-     * Delete all expired sessions (housekeeping).
+     * Delete all expired sessions (housekeeping). Returns 0 in degraded mode.
      */
     purgeExpired(): Promise<number>;
     /**
      * Touch updated_at and optionally extend TTL for an existing session.
+     * No-op in degraded mode.
      */
     touch(id: string, ttlMs?: number): Promise<void>;
     close(): Promise<void>;
@@ -2970,4 +3053,4 @@ declare function parseThreadSearchResponse(text: string): ThreadSearchResponse;
 declare function parseUploadResponse(text: string): UploadResponse;
 declare function parseLoginResponse(text: string): LoginResponse;
 
-export { API_ENDPOINTS, type AccountCheckpointEvent, type AccountHealthyEvent, type AccountRefreshEvent, type AccountRefreshFailedEvent, type AccountRestrictedEvent, type AccountStaleEvent, type AccountSuspendedEvent, type AccountWarningEvent, type ApiEndpointName, type AppStateCookie, type AppStateInputType, type AppStateLoadOptions, type AppStateRefreshFailedEvent, type AppStateResult, AttachmentSchema, AuthError, AuthManager, type BrowserFingerprint, CacheError, CacheManager, type CacheManagerOptions, CheckpointRequiredError, type ClientEventMap, type ClientOptions, type Config, ConfigurationError, type ConnectedEvent, ConnectionError, type CreateGroupOptions, type CreatePollOptions, DEFAULT_CACHE_MAX_SIZE, DEFAULT_CACHE_TTL_MS, DNSError, DeserializationError, DiagnosticsModule, type DiagnosticsStats, type DisconnectedEvent, DownloadError, type DownloadOptions, type EndpointDefinition, type ErrorContext, FileStorageAdapter, FilesModule, ForbiddenError, type FormRequestOptions, type FriendListOptions, type FriendListResponse, FriendListResponseSchema, GRAPHQL_FRIENDLY_NAMES, type GraphQLBodyOptions, type HealthCheckResult, HttpClient, HttpError, type HttpMethod, type HttpRequestOptions, type HttpResponse, InvalidAppStateError, LibSqlSessionStore, LibSqlStorageAdapter, type LightspeedRequestOptions, type Logger, LoginFailedError, type LoginResponse, LoginResponseSchema, MemoryStorageAdapter, type Message, type MessageAttachment, type MessageDeliveredEvent, type MessageEvent, type MessageListResponse, MessageListResponseSchema, type MessageNode, MessageNodeSchema, type MessageReactionEvent, type MessageReactionRemovedEvent, type MessageSearchResponse, MessageSearchResponseSchema, type MessageSearchResult, type MessageSeenEvent, type MessageUnsendEvent, MessagesModule, type Middleware, type MultipartField, type MultipartFile, NetworkError, NotFoundError, PandindiganClient, PandindiganError, ParseError, type ParsedAttachment, type ParsedMessageSearchNode, type ParsedPollOption, type ParsedPresenceEntry, type ParsedThreadSearchNode, type ParsedUserProfile, type Poll, type PollOption, PollOptionSchema, type PollResponse, PollResponseSchema, PollsModule, PresenceEntrySchema, PresenceModule, type PresenceResponse, PresenceResponseSchema, type PresenceStatus, type PresenceUpdateEvent, type ProxyConfig, ProxyError, ProxyManager, type ProxyOptions, RateLimitError, type ReconnectFailedEvent, type ReconnectedEvent, type ReconnectingEvent, type ReplyOptions, type RequestContext, type RequestSpec, type ResponseContext, ResponseValidationError, SearchModule, type SearchOptions, type SearchUsersOptions, type SendMessageOptions, type SendMessageResponse, SendMessageResponseSchema, type SendMessageResult, type SendStickerOptions, type SendStickerResult, ServerError, SessionExpiredError, type SessionRestoredEvent, type SessionRow, type SessionSavedEvent, type SessionTokens, SessionsModule, StealthManager, type StickerMeta, type StickerPack, StickersModule, type StorageAdapter, StorageError, type Thread, type ThreadListOptions, type ThreadListResponse, ThreadListResponseSchema, type ThreadMutedEvent, type ThreadNode, ThreadNodeSchema, type ThreadParticipantAddedEvent, type ThreadParticipantRemovedEvent, type ThreadPhotoChangedEvent, type ThreadReadEvent, type ThreadRenamedEvent, type ThreadSearchResponse, ThreadSearchResponseSchema, type ThreadSearchResult, type ThreadTypingEvent, ThreadsModule, TimeoutError, TwoFactorRequiredError, TypedEventEmitter, UploadError, type UploadOptions, type UploadResponse, UploadResponseSchema, type UploadResult, type UserProfile, type UserProfileResponse, UserProfileResponseSchema, UserProfileSchema, UsersModule, type VotePollOptions, buildFormRequest as buildFormRequestBody, buildGraphQLBody, buildGraphQLRequest as buildGraphQLRequestBody, buildJsonBody, buildLightspeedBody, buildMultipartBody, buildStealthHeaders, clearDnsCache, createClient, createLogger, cryptoRandomFloat, cryptoRandomInt, decrypt, encodeFormBody, encrypt, exportJar, extractAttachmentId, generateBoundary, generateFingerprint, getEndpointUrl, getUserIdFromJar, hmac, humanDelay, hydrateJar, isGraphQLEndpoint, isMessageSendEndpoint, loadAppState, loadConfig, login, makeFormRequestSpec, makeMultipartRequestSpec, maskProxyUrl, normalizeCacheOptions, nsKey, parseFriendListResponse, parseLoginResponse, parseMessageListResponse, parseMessageSearchResponse, parsePollResponse, parsePresenceResponse, parseRawResponse, parseSendMessageResponse, parseThreadListResponse, parseThreadSearchResponse, parseUploadResponse, parseUserProfileResponse, randomHex, resolveProxyUrl, resolveWithCache, stripFbPrefix, validate, validateAppState };
+export { API_ENDPOINTS, type AccountCheckpointEvent, type AccountHealthyEvent, type AccountRefreshEvent, type AccountRefreshFailedEvent, type AccountRestrictedEvent, type AccountStaleEvent, type AccountSuspendedEvent, type AccountWarningEvent, type ApiEndpointName, type AppStateCookie, type AppStateInputType, type AppStateLoadOptions, type AppStateRefreshFailedEvent, type AppStateResult, AttachmentSchema, AuthError, AuthManager, type BrowserFingerprint, CacheError, CacheManager, type CacheManagerOptions, CheckpointRequiredError, type ClientEventMap, type ClientOptions, type Config, ConfigurationError, type ConnectedEvent, ConnectionError, type CreateGroupOptions, type CreatePollOptions, DEFAULT_CACHE_MAX_SIZE, DEFAULT_CACHE_TTL_MS, DNSError, DeserializationError, DiagnosticsModule, type DiagnosticsStats, type DisconnectedEvent, DownloadError, type DownloadOptions, type EndpointDefinition, type ErrorContext, FileStorageAdapter, FilesModule, ForbiddenError, type FormRequestOptions, type FriendListOptions, type FriendListResponse, FriendListResponseSchema, GRAPHQL_FRIENDLY_NAMES, type GraphQLBodyOptions, type HealthCheckResult, HttpClient, HttpError, type HttpMethod, type HttpRequestOptions, type HttpResponse, InvalidAppStateError, LibSqlSessionStore, LibSqlStorageAdapter, type LightspeedRequestOptions, type Logger, LoginFailedError, type LoginResponse, LoginResponseSchema, MemoryStorageAdapter, type Message, type MessageAttachment, type MessageDeliveredEvent, type MessageEvent, type MessageListResponse, MessageListResponseSchema, type MessageNode, MessageNodeSchema, type MessageReactionEvent, type MessageReactionRemovedEvent, type MessageSearchResponse, MessageSearchResponseSchema, type MessageSearchResult, type MessageSeenEvent, type MessageUnsendEvent, MessagesModule, type Middleware, type MultipartField, type MultipartFile, NetworkError, NotFoundError, PandindiganClient, PandindiganError, ParseError, type ParsedAttachment, type ParsedMessageSearchNode, type ParsedPollOption, type ParsedPresenceEntry, type ParsedThreadSearchNode, type ParsedUserProfile, type Poll, type PollOption, PollOptionSchema, type PollResponse, PollResponseSchema, PollsModule, PresenceEntrySchema, PresenceModule, type PresenceResponse, PresenceResponseSchema, type PresenceStatus, type PresenceUpdateEvent, type ProxyConfig, ProxyError, ProxyManager, type ProxyOptions, RateLimitError, type ReconnectFailedEvent, type ReconnectedEvent, type ReconnectingEvent, type ReplyOptions, type RequestContext, type RequestSpec, type ResponseContext, ResponseValidationError, SearchModule, type SearchOptions, type SearchUsersOptions, type SendMessageOptions, type SendMessageResponse, SendMessageResponseSchema, type SendMessageResult, type SendStickerOptions, type SendStickerResult, ServerError, SessionExpiredError, type SessionRestoredEvent, type SessionRow, type SessionSavedEvent, type SessionTokens, SessionsModule, StealthManager, type StickerMeta, type StickerPack, StickersModule, type StorageAdapter, type StorageDiagnostics, StorageError, type Thread, type ThreadListOptions, type ThreadListResponse, ThreadListResponseSchema, type ThreadMutedEvent, type ThreadNode, ThreadNodeSchema, type ThreadParticipantAddedEvent, type ThreadParticipantRemovedEvent, type ThreadPhotoChangedEvent, type ThreadReadEvent, type ThreadRenamedEvent, type ThreadSearchResponse, ThreadSearchResponseSchema, type ThreadSearchResult, type ThreadTypingEvent, ThreadsModule, TimeoutError, TwoFactorRequiredError, TypedEventEmitter, UploadError, type UploadOptions, type UploadResponse, UploadResponseSchema, type UploadResult, type UserProfile, type UserProfileResponse, UserProfileResponseSchema, UserProfileSchema, UsersModule, type VotePollOptions, buildFormRequest as buildFormRequestBody, buildGraphQLBody, buildGraphQLRequest as buildGraphQLRequestBody, buildJsonBody, buildLightspeedBody, buildMultipartBody, buildStealthHeaders, clearDnsCache, createClient, createLogger, cryptoRandomFloat, cryptoRandomInt, decrypt, encodeFormBody, encrypt, exportJar, extractAttachmentId, generateBoundary, generateFingerprint, getEndpointUrl, getUserIdFromJar, hmac, humanDelay, hydrateJar, isGraphQLEndpoint, isMessageSendEndpoint, loadAppState, loadConfig, login, makeFormRequestSpec, makeMultipartRequestSpec, maskProxyUrl, normalizeCacheOptions, nsKey, parseFriendListResponse, parseLoginResponse, parseMessageListResponse, parseMessageSearchResponse, parsePollResponse, parsePresenceResponse, parseRawResponse, parseSendMessageResponse, parseThreadListResponse, parseThreadSearchResponse, parseUploadResponse, parseUserProfileResponse, randomHex, resolveProxyUrl, resolveWithCache, stripFbPrefix, validate, validateAppState };

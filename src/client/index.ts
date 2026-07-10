@@ -325,6 +325,8 @@ export const login = (options: ClientOptions = {}): Promise<PandindiganClient> =
   createClient(options);
 
 export async function createClient(options: ClientOptions = {}): Promise<PandindiganClient> {
+  const _startupStartMs = performance.now();
+
   // ── Build config ─────────────────────────────────────────────────────────
   const rawOverrides: Record<string, unknown> = {};
   if (options.logLevel) rawOverrides['logLevel'] = options.logLevel;
@@ -383,7 +385,7 @@ export async function createClient(options: ClientOptions = {}): Promise<Pandind
   const emitter = new TypedEventEmitter();
 
   // ── Storage ──────────────────────────────────────────────────────────────
-  const storage = options.storage ?? await createStorageAdapter(config);
+  const storage = options.storage ?? await createStorageAdapter(config, logger);
 
   // ── Session store (Remote Storage API-backed) ─────────────────
   const sessionStore = new LibSqlSessionStore();
@@ -491,7 +493,20 @@ export async function createClient(options: ClientOptions = {}): Promise<Pandind
     wsAgent,
   );
 
-  logger.info('Client ready', { tag: 'CLIENT', userId: auth.tokens.userId });
+  const _startupDurationMs = Math.round(performance.now() - _startupStartMs);
+  logger.success('Client ready', {
+    tag: 'STARTUP',
+    userId: auth.tokens.userId,
+    startupDurationMs: _startupDurationMs,
+    storageAdapter: config.storage.adapter,
+    stealthLevel: config.stealth.level,
+    logLevel: config.logLevel,
+    proxy: config.proxy.url ?? (config.proxy.pool.length > 0 ? `pool(${config.proxy.pool.length})` : null),
+    mem: (() => {
+      const m = process.memoryUsage();
+      return `${Math.round(m.heapUsed / 1024 / 1024)}MB`;
+    })(),
+  });
 
   const sessions = new SessionsModule(sessionStore);
 

@@ -25,6 +25,7 @@ interface HttpModuleLike {
 interface HttpClientResponse {
   statusCode: number;
   body: string;
+  latencyMs: number;
 }
 
 /**
@@ -164,8 +165,26 @@ export interface StorageSessionTouchResponse {
   ok: boolean;
 }
 
+// ── Backoff ────────────────────────────────────────────────────────────────────
+
+/** Exponential backoff with full-jitter: delay = rand(0, base * 2^attempt). */
+function backoffDelayMs(attempt: number, baseMs = 200, maxMs = 8_000): number {
+  const cap = Math.min(maxMs, baseMs * Math.pow(2, attempt));
+  return Math.random() * cap;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms).unref?.() ?? setTimeout(resolve, ms));
+}
+
 /**
- * Reusable HTTP client for communicating with a remote storage worker API.
+ * Reusable HTTP client for communicating with the remote Panindigan storage API.
+ *
+ * Retry strategy: each endpoint is attempted `retries + 1` times with
+ * exponential back-off and full jitter between retries. When all retries for
+ * one endpoint are exhausted the client moves to the next endpoint in the list.
+ * A {@link StorageError} is thrown only after every endpoint-retry combination
+ * has failed.
  */
 export class StorageApiClient {
   private readonly endpoints: readonly string[];
@@ -185,9 +204,7 @@ export class StorageApiClient {
   }
 
   async get(key: string): Promise<StorageGetResponse> {
-    return this.request<StorageGetResponse, StorageGetRequest>('POST', '/v1/storage/get', {
-      key,
-    });
+    return this.request<StorageGetResponse, StorageGetRequest>('POST', '/v1/storage/get', { key });
   }
 
   async set(key: string, value: string, expiresAt: number | null): Promise<StorageSetResponse> {
@@ -199,9 +216,7 @@ export class StorageApiClient {
   }
 
   async delete(key: string): Promise<StorageDeleteResponse> {
-    return this.request<StorageDeleteResponse, StorageDeleteRequest>('POST', '/v1/storage/delete', {
-      key,
-    });
+    return this.request<StorageDeleteResponse, StorageDeleteRequest>('POST', '/v1/storage/delete', { key });
   }
 
   async clear(): Promise<StorageClearResponse> {
@@ -218,21 +233,15 @@ export class StorageApiClient {
   }
 
   async sessionRestore(id: string): Promise<StorageSessionRestoreResponse> {
-    return this.request<StorageSessionRestoreResponse, { id: string }>('POST', '/v1/sessions/restore', {
-      id,
-    });
+    return this.request<StorageSessionRestoreResponse, { id: string }>('POST', '/v1/sessions/restore', { id });
   }
 
   async sessionList(userId?: string): Promise<StorageSessionListResponse> {
-    return this.request<StorageSessionListResponse, { userId?: string }>('POST', '/v1/sessions/list', {
-      userId,
-    });
+    return this.request<StorageSessionListResponse, { userId?: string }>('POST', '/v1/sessions/list', { userId });
   }
 
   async sessionDelete(id: string): Promise<StorageSessionDeleteResponse> {
-    return this.request<StorageSessionDeleteResponse, { id: string }>('POST', '/v1/sessions/delete', {
-      id,
-    });
+    return this.request<StorageSessionDeleteResponse, { id: string }>('POST', '/v1/sessions/delete', { id });
   }
 
   async sessionPurgeExpired(): Promise<StorageSessionPurgeResponse> {
@@ -259,14 +268,21 @@ export class StorageApiClient {
           return await this.fetchJson<TResponse, TRequest>(endpoint, method, path, body);
         } catch (error) {
           errors.push(error instanceof Error ? error : new Error(String(error)));
-          if (attempt >= this.retries) {
-            break;
+
+          const isLastAttempt = attempt >= this.retries;
+          if (!isLastAttempt) {
+            // Exponential back-off with full jitter between retries.
+            await sleep(backoffDelayMs(attempt));
           }
         }
       }
     }
 
-    throw new StorageError(`Storage API request failed for ${path}`, { path, endpoints: this.endpoints }, errors.at(-1));
+    throw new StorageError(
+      `Storage API request failed for ${path} after exhausting all endpoints and retries`,
+      { path, endpoints: [...this.endpoints], retries: this.retries },
+      errors.at(-1),
+    );
   }
 
   private async fetchJson<TResponse, TRequest>(
@@ -278,6 +294,7 @@ export class StorageApiClient {
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'Content-Type': 'application/json',
+      Connection: 'keep-alive',
     };
 
     if (this.authToken) {
@@ -288,6 +305,7 @@ export class StorageApiClient {
 
     try {
       const response = await this.sendRequest(endpoint, path, method, headers, payload);
+
       let parsedPayload: unknown = undefined;
       if (response.body) {
         try {
@@ -298,20 +316,18 @@ export class StorageApiClient {
       }
 
       if (response.statusCode >= 400) {
-        throw new StorageError(`Storage API request returned ${response.statusCode}`, {
+        throw new StorageError(`Storage API returned HTTP ${response.statusCode}`, {
           endpoint,
           path,
           statusCode: response.statusCode,
+          latencyMs: Math.round(response.latencyMs),
           payload: parsedPayload,
         });
       }
 
       return parsedPayload as TResponse;
     } catch (error) {
-      if (error instanceof StorageError) {
-        throw error;
-      }
-
+      if (error instanceof StorageError) throw error;
       throw new StorageError('Storage API request failed', { endpoint, path }, error);
     }
   }
@@ -324,14 +340,12 @@ export class StorageApiClient {
     payload?: string,
   ): Promise<HttpClientResponse> {
     return new Promise<HttpClientResponse>((resolve, reject) => {
+      const startMs = Date.now();
       const transport = this.getTransport(endpoint);
+
       const request = transport.request(
         this.buildUrl(endpoint, path),
-        {
-          method,
-          headers,
-          timeout: this.timeoutMs,
-        },
+        { method, headers, timeout: this.timeoutMs },
         (response: IncomingMessageLike) => {
           const chunks: string[] = [];
           response.on('data', (chunk: unknown) => {
@@ -342,20 +356,18 @@ export class StorageApiClient {
             resolve({
               statusCode: response.statusCode ?? 0,
               body: chunks.join(''),
+              latencyMs: Date.now() - startMs,
             });
           });
         },
       );
 
       request.on('timeout', () => {
-        request.destroy(new Error('Request timed out'));
+        request.destroy(new Error(`Request to ${this.buildUrl(endpoint, path)} timed out after ${this.timeoutMs} ms`));
       });
       request.on('error', reject);
 
-      if (payload) {
-        request.write(payload);
-      }
-
+      if (payload) request.write(payload);
       request.end();
     });
   }
@@ -363,9 +375,7 @@ export class StorageApiClient {
   private getTransport(endpoint: string): HttpModuleLike {
     const moduleName = endpoint.startsWith('https://') ? 'https' : 'http';
     const globalRequire = (globalThis as typeof globalThis & { require?: (moduleName: string) => unknown }).require;
-    if (globalRequire) {
-      return globalRequire(moduleName) as HttpModuleLike;
-    }
+    if (globalRequire) return globalRequire(moduleName) as HttpModuleLike;
     return require(moduleName) as HttpModuleLike;
   }
 
@@ -381,22 +391,19 @@ export class StorageApiClient {
     if (endpoints) {
       for (const endpoint of endpoints) {
         const normalized = endpoint.trim();
-        if (normalized) {
-          values.add(normalized);
-        }
+        if (normalized) values.add(normalized);
       }
     }
 
     if (baseUrl) {
       for (const entry of baseUrl.split(',')) {
         const normalized = entry.trim();
-        if (normalized) {
-          values.add(normalized);
-        }
+        if (normalized) values.add(normalized);
       }
     }
 
     if (values.size === 0) {
+      // Built-in HA pair: primary → secondary automatic failover.
       values.add('https://storage.panindigan.com');
       values.add('https://storage2.panindigan.com');
     }

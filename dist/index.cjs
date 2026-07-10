@@ -274,6 +274,7 @@ var EXPIRED_SESSION_INDICATORS = [
 ];
 
 // src/logger/index.ts
+var SUCCESS_LEVEL_NUM = 35;
 function buildRedactPaths() {
   const paths = [];
   for (const field of SENSITIVE_FIELDS) {
@@ -284,21 +285,36 @@ function buildRedactPaths() {
   }
   return paths;
 }
+function detectColorSupport() {
+  const env2 = globalThis.process?.env ?? {};
+  const stdout = globalThis.process?.stdout;
+  if (env2["NO_COLOR"]) return false;
+  if (env2["FORCE_COLOR"] === "0") return false;
+  if (env2["FORCE_COLOR"]) return true;
+  if (env2["CI"]) return false;
+  return !!stdout?.isTTY;
+}
 function createLogger(options) {
   const level = options.level ?? "info";
   const pretty = options.pretty ?? false;
+  const colorize = detectColorSupport();
   const transport = pretty ? {
     target: "pino-pretty",
     options: {
-      colorize: true,
+      colorize,
       translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l o",
       ignore: "pid,hostname",
-      messageFormat: "[{level}] [{tag}] {msg}"
+      messageFormat: "[{tag}] {msg}",
+      customLevels: `success:${SUCCESS_LEVEL_NUM}`,
+      customColors: "success:green",
+      useOnlyCustomProps: false
     }
   } : void 0;
   const base = (0, import_pino.default)(
     {
       level,
+      customLevels: { success: SUCCESS_LEVEL_NUM },
+      useOnlyCustomLevels: false,
       redact: {
         paths: buildRedactPaths(),
         censor: "[REDACTED]"
@@ -310,10 +326,12 @@ function createLogger(options) {
     }
   );
   function wrap(p) {
+    const pw = p;
     return {
       trace: (msg, ctx) => p.trace(ctx ?? {}, msg),
       debug: (msg, ctx) => p.debug(ctx ?? {}, msg),
       info: (msg, ctx) => p.info(ctx ?? {}, msg),
+      success: (msg, ctx) => pw.success(ctx ?? {}, msg),
       warn: (msg, ctx) => p.warn(ctx ?? {}, msg),
       error: (msg, ctx) => p.error(ctx ?? {}, msg),
       fatal: (msg, ctx) => p.fatal(ctx ?? {}, msg),
@@ -1053,6 +1071,13 @@ var FileStorageAdapter = class {
 };
 
 // src/storage/api-client.ts
+function backoffDelayMs(attempt, baseMs = 200, maxMs = 8e3) {
+  const cap = Math.min(maxMs, baseMs * Math.pow(2, attempt));
+  return Math.random() * cap;
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms).unref?.() ?? setTimeout(resolve, ms));
+}
 var StorageApiClient = class {
   endpoints;
   authToken;
@@ -1068,9 +1093,7 @@ var StorageApiClient = class {
     return this.request("GET", "/v1/health");
   }
   async get(key) {
-    return this.request("POST", "/v1/storage/get", {
-      key
-    });
+    return this.request("POST", "/v1/storage/get", { key });
   }
   async set(key, value, expiresAt) {
     return this.request("POST", "/v1/storage/set", {
@@ -1080,9 +1103,7 @@ var StorageApiClient = class {
     });
   }
   async delete(key) {
-    return this.request("POST", "/v1/storage/delete", {
-      key
-    });
+    return this.request("POST", "/v1/storage/delete", { key });
   }
   async clear() {
     return this.request("POST", "/v1/storage/clear");
@@ -1096,19 +1117,13 @@ var StorageApiClient = class {
     });
   }
   async sessionRestore(id) {
-    return this.request("POST", "/v1/sessions/restore", {
-      id
-    });
+    return this.request("POST", "/v1/sessions/restore", { id });
   }
   async sessionList(userId) {
-    return this.request("POST", "/v1/sessions/list", {
-      userId
-    });
+    return this.request("POST", "/v1/sessions/list", { userId });
   }
   async sessionDelete(id) {
-    return this.request("POST", "/v1/sessions/delete", {
-      id
-    });
+    return this.request("POST", "/v1/sessions/delete", { id });
   }
   async sessionPurgeExpired() {
     return this.request("POST", "/v1/sessions/purge");
@@ -1127,18 +1142,24 @@ var StorageApiClient = class {
           return await this.fetchJson(endpoint, method, path, body);
         } catch (error) {
           errors.push(error instanceof Error ? error : new Error(String(error)));
-          if (attempt >= this.retries) {
-            break;
+          const isLastAttempt = attempt >= this.retries;
+          if (!isLastAttempt) {
+            await sleep(backoffDelayMs(attempt));
           }
         }
       }
     }
-    throw new StorageError(`Storage API request failed for ${path}`, { path, endpoints: this.endpoints }, errors.at(-1));
+    throw new StorageError(
+      `Storage API request failed for ${path} after exhausting all endpoints and retries`,
+      { path, endpoints: [...this.endpoints], retries: this.retries },
+      errors.at(-1)
+    );
   }
   async fetchJson(endpoint, method, path, body) {
     const headers = {
       Accept: "application/json",
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      Connection: "keep-alive"
     };
     if (this.authToken) {
       headers.Authorization = `Bearer ${this.authToken}`;
@@ -1155,31 +1176,27 @@ var StorageApiClient = class {
         }
       }
       if (response.statusCode >= 400) {
-        throw new StorageError(`Storage API request returned ${response.statusCode}`, {
+        throw new StorageError(`Storage API returned HTTP ${response.statusCode}`, {
           endpoint,
           path,
           statusCode: response.statusCode,
+          latencyMs: Math.round(response.latencyMs),
           payload: parsedPayload
         });
       }
       return parsedPayload;
     } catch (error) {
-      if (error instanceof StorageError) {
-        throw error;
-      }
+      if (error instanceof StorageError) throw error;
       throw new StorageError("Storage API request failed", { endpoint, path }, error);
     }
   }
   sendRequest(endpoint, path, method, headers, payload) {
     return new Promise((resolve, reject) => {
+      const startMs = Date.now();
       const transport = this.getTransport(endpoint);
       const request = transport.request(
         this.buildUrl(endpoint, path),
-        {
-          method,
-          headers,
-          timeout: this.timeoutMs
-        },
+        { method, headers, timeout: this.timeoutMs },
         (response) => {
           const chunks = [];
           response.on("data", (chunk) => {
@@ -1189,27 +1206,24 @@ var StorageApiClient = class {
           response.on("end", () => {
             resolve({
               statusCode: response.statusCode ?? 0,
-              body: chunks.join("")
+              body: chunks.join(""),
+              latencyMs: Date.now() - startMs
             });
           });
         }
       );
       request.on("timeout", () => {
-        request.destroy(new Error("Request timed out"));
+        request.destroy(new Error(`Request to ${this.buildUrl(endpoint, path)} timed out after ${this.timeoutMs} ms`));
       });
       request.on("error", reject);
-      if (payload) {
-        request.write(payload);
-      }
+      if (payload) request.write(payload);
       request.end();
     });
   }
   getTransport(endpoint) {
     const moduleName = endpoint.startsWith("https://") ? "https" : "http";
     const globalRequire = globalThis.require;
-    if (globalRequire) {
-      return globalRequire(moduleName);
-    }
+    if (globalRequire) return globalRequire(moduleName);
     return require(moduleName);
   }
   buildUrl(endpoint, path) {
@@ -1222,17 +1236,13 @@ var StorageApiClient = class {
     if (endpoints) {
       for (const endpoint of endpoints) {
         const normalized = endpoint.trim();
-        if (normalized) {
-          values.add(normalized);
-        }
+        if (normalized) values.add(normalized);
       }
     }
     if (baseUrl) {
       for (const entry of baseUrl.split(",")) {
         const normalized = entry.trim();
-        if (normalized) {
-          values.add(normalized);
-        }
+        if (normalized) values.add(normalized);
       }
     }
     if (values.size === 0) {
@@ -1244,12 +1254,38 @@ var StorageApiClient = class {
 };
 
 // src/storage/libsql.ts
+var SYNC_INTERVAL_MS = 3e4;
+var MAX_PENDING_WRITES = 1e3;
 var LibSqlStorageAdapter = class {
   client;
-  apiUrl;
+  /** In-memory fallback — also used as a write-through cache in connected mode. */
+  fallback;
+  /** True when the remote is unavailable and we're operating from memory. */
+  fallbackMode = false;
+  connectionState = "connecting";
+  /** Writes that could not reach remote storage and are waiting for replay. */
+  pendingWrites = [];
+  /** Background timer that periodically reconnects and replays pending writes. */
+  syncTimer = null;
+  /** Prevents concurrent replay runs from interleaving and reordering writes. */
+  isSyncing = false;
+  // ── Diagnostics fields ────────────────────────────────────────────────────────
+  bootstrapDurationMs = 0;
+  failoverUsed = false;
+  retryCount = 0;
+  lastSyncAt = null;
+  lastError = null;
+  activeEndpoint;
+  logger;
+  /**
+   * A promise that resolves once the bootstrap health-check completes (whether
+   * the remote was reachable or not). Awaited by `ensureReady()` so that the
+   * very first operation waits for the result of the health-check before deciding
+   * which path (remote or fallback) to use.
+   */
   ready;
-  constructor(baseUrl = STORAGE_API_URL, apiToken = STORAGE_API_TOKEN) {
-    this.apiUrl = baseUrl;
+  constructor(baseUrl = STORAGE_API_URL, apiToken = STORAGE_API_TOKEN, logger) {
+    this.logger = logger;
     const endpoints = STORAGE_API_ENDPOINTS ? STORAGE_API_ENDPOINTS.split(",").map((e) => e.trim()).filter(Boolean) : void 0;
     this.client = new StorageApiClient({
       baseUrl,
@@ -1258,53 +1294,209 @@ var LibSqlStorageAdapter = class {
       timeoutMs: STORAGE_API_TIMEOUT_MS,
       retries: STORAGE_API_RETRIES
     });
+    const allEndpoints = endpoints?.length ? endpoints : baseUrl ? baseUrl.split(",").map((e) => e.trim()).filter(Boolean) : [];
+    this.activeEndpoint = allEndpoints[0] ?? "https://storage.panindigan.com";
+    this.fallback = new MemoryStorageAdapter();
     this.ready = this.bootstrap();
   }
+  // ── Bootstrap & failover ──────────────────────────────────────────────────────
   async bootstrap() {
+    const startMs = Date.now();
     try {
       await this.client.health();
+      this.bootstrapDurationMs = Date.now() - startMs;
+      this.connectionState = "connected";
+      this.logger?.success("Remote storage connected", {
+        tag: "STORAGE",
+        provider: "remote",
+        endpoint: this.activeEndpoint,
+        bootstrapDurationMs: this.bootstrapDurationMs,
+        fallbackMode: false,
+        failoverUsed: this.failoverUsed,
+        connectionState: "connected"
+      });
     } catch (err) {
-      throw new StorageError("Storage API bootstrap failed", { apiUrl: this.apiUrl }, err);
+      this.bootstrapDurationMs = Date.now() - startMs;
+      this.fallbackMode = true;
+      this.failoverUsed = true;
+      this.connectionState = "fallback";
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.logger?.warn(
+        "Remote storage unavailable \u2014 operating in memory fallback mode. Writes are queued for sync when the remote comes back online.",
+        {
+          tag: "STORAGE",
+          provider: "memory-fallback",
+          endpoint: this.activeEndpoint,
+          bootstrapDurationMs: this.bootstrapDurationMs,
+          fallbackMode: true,
+          failoverUsed: false,
+          connectionState: "fallback",
+          error: this.lastError
+        }
+      );
+    } finally {
+      this.startBackgroundSync();
     }
   }
+  // ── Background sync ───────────────────────────────────────────────────────────
+  startBackgroundSync() {
+    if (this.connectionState === "closed") return;
+    if (this.syncTimer) return;
+    this.syncTimer = setInterval(() => {
+      this.backgroundSync().catch(() => {
+      });
+    }, SYNC_INTERVAL_MS);
+    this.syncTimer.unref?.();
+  }
+  async backgroundSync() {
+    if (this.connectionState === "closed") return;
+    if (this.isSyncing) return;
+    this.isSyncing = true;
+    try {
+      if (this.fallbackMode) {
+        try {
+          await this.client.health();
+          this.fallbackMode = false;
+          this.connectionState = "connected";
+          this.lastError = null;
+          this.logger?.success("Remote storage reconnected after fallback period", {
+            tag: "STORAGE",
+            endpoint: this.activeEndpoint,
+            pendingWrites: this.pendingWrites.length,
+            connectionState: "connected"
+          });
+          await this.replayPendingWrites();
+        } catch {
+          return;
+        }
+      } else if (this.pendingWrites.length > 0) {
+        await this.replayPendingWrites();
+      }
+      this.lastSyncAt = /* @__PURE__ */ new Date();
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+  /**
+   * Replay the pending write queue in strict FIFO order.
+   *
+   * Ordering guarantee: we process the head of the queue one write at a time.
+   * On the first failure we stop immediately so that a later `set` can never
+   * land on the remote before an earlier `clear` that preceded it.
+   * Failed writes stay at the head of the queue and are retried on the next
+   * sync cycle.
+   */
+  async replayPendingWrites() {
+    let replayed = 0;
+    let stopped = false;
+    while (this.pendingWrites.length > 0) {
+      const write = this.pendingWrites[0];
+      try {
+        if (write.op === "set" && write.key !== void 0 && write.value !== void 0) {
+          await this.client.set(write.key, write.value, write.expiresAt ?? null);
+        } else if (write.op === "delete" && write.key !== void 0) {
+          await this.client.delete(write.key);
+        } else if (write.op === "clear") {
+          await this.client.clear();
+        }
+        this.pendingWrites.shift();
+        replayed++;
+        this.retryCount++;
+      } catch {
+        stopped = true;
+        break;
+      }
+    }
+    if (replayed > 0 || stopped) {
+      this.logger?.info("Pending write queue sync", {
+        tag: "STORAGE",
+        replayed,
+        failedAtHead: stopped,
+        remainingQueue: this.pendingWrites.length
+      });
+    }
+  }
+  // ── Helpers ───────────────────────────────────────────────────────────────────
   async ensureReady() {
     await this.ready;
   }
+  enqueuePendingWrite(write) {
+    if (this.pendingWrites.length < MAX_PENDING_WRITES) {
+      this.pendingWrites.push(write);
+      this.retryCount++;
+    }
+  }
+  // ── StorageAdapter interface ──────────────────────────────────────────────────
   async get(key) {
     await this.ensureReady();
+    if (this.fallbackMode) {
+      return this.fallback.get(key);
+    }
     try {
       const result = await this.client.get(key);
       if (!result.found || result.value === null) {
         return void 0;
       }
       if (result.expiresAt !== null && Date.now() > result.expiresAt) {
-        await this.client.delete(key);
+        this.client.delete(key).catch(() => {
+        });
         return void 0;
       }
-      return JSON.parse(result.value);
+      const parsed = JSON.parse(result.value);
+      await this.fallback.set(key, parsed, void 0);
+      return parsed;
     } catch (err) {
-      throw new StorageError(`Storage API get failed for key "${key}"`, { key }, err);
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.logger?.warn("Storage remote get failed \u2014 serving from fallback cache", {
+        tag: "STORAGE",
+        key,
+        error: this.lastError
+      });
+      return this.fallback.get(key);
     }
   }
   async set(key, value, ttlMs) {
     await this.ensureReady();
+    const serialized = JSON.stringify(value);
+    const expiresAt = ttlMs !== void 0 ? Date.now() + ttlMs : null;
+    await this.fallback.set(key, value, ttlMs);
+    if (this.fallbackMode) {
+      this.enqueuePendingWrite({ op: "set", key, value: serialized, expiresAt, enqueuedAt: Date.now() });
+      return;
+    }
     try {
-      const expiresAt = ttlMs !== void 0 ? Date.now() + ttlMs : null;
-      await this.client.set(key, JSON.stringify(value), expiresAt);
+      await this.client.set(key, serialized, expiresAt);
     } catch (err) {
-      throw new StorageError(`Storage API set failed for key "${key}"`, { key }, err);
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.logger?.warn("Storage remote set failed \u2014 write queued for sync", {
+        tag: "STORAGE",
+        key,
+        error: this.lastError
+      });
+      this.enqueuePendingWrite({ op: "set", key, value: serialized, expiresAt, enqueuedAt: Date.now() });
     }
   }
   async delete(key) {
     await this.ensureReady();
+    await this.fallback.delete(key);
+    if (this.fallbackMode) {
+      this.enqueuePendingWrite({ op: "delete", key, enqueuedAt: Date.now() });
+      return;
+    }
     try {
       await this.client.delete(key);
     } catch (err) {
-      throw new StorageError(`Storage API delete failed for key "${key}"`, { key }, err);
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.enqueuePendingWrite({ op: "delete", key, enqueuedAt: Date.now() });
     }
   }
   async clear() {
     await this.ensureReady();
+    await this.fallback.clear();
+    if (this.fallbackMode) {
+      this.enqueuePendingWrite({ op: "clear", enqueuedAt: Date.now() });
+      return;
+    }
     try {
       await this.client.clear();
     } catch (err) {
@@ -1315,18 +1507,41 @@ var LibSqlStorageAdapter = class {
     return await this.get(key) !== void 0;
   }
   async close() {
-    try {
-      await this.client.clear();
-    } catch {
+    this.connectionState = "closed";
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer);
+      this.syncTimer = null;
     }
+    if (this.pendingWrites.length > 0 && !this.fallbackMode) {
+      try {
+        await this.replayPendingWrites();
+      } catch {
+      }
+    }
+  }
+  // ── Diagnostics ───────────────────────────────────────────────────────────────
+  /** Return a structured diagnostics snapshot for observability tooling. */
+  getDiagnostics() {
+    return {
+      provider: this.fallbackMode ? "memory-fallback" : "remote",
+      endpoint: this.activeEndpoint,
+      connectionState: this.connectionState,
+      failoverUsed: this.failoverUsed,
+      fallbackMode: this.fallbackMode,
+      bootstrapDurationMs: this.bootstrapDurationMs,
+      retryCount: this.retryCount,
+      pendingWriteCount: this.pendingWrites.length,
+      lastSyncAt: this.lastSyncAt,
+      lastError: this.lastError
+    };
   }
 };
 
 // src/storage/index.ts
-async function createStorageAdapter(config) {
+async function createStorageAdapter(config, logger) {
   const adapter = config.storage.adapter;
   if (adapter === "libsql") {
-    return new LibSqlStorageAdapter();
+    return new LibSqlStorageAdapter(void 0, void 0, logger);
   }
   if (adapter === "file") {
     const path = config.session.persistPath ?? "./panindigan-storage.json";
@@ -2225,6 +2440,9 @@ var MqttClient = class {
     this._packetId = this._packetId % 65535 + 1;
     return id;
   }
+  // Ping latency tracking — set when PINGREQ is sent, cleared on PINGRESP.
+  lastPingAt = 0;
+  lastPingLatencyMs = null;
   // Reconnect state
   reconnectAttempts = 0;
   activeBrokerIndex = 0;
@@ -2311,7 +2529,7 @@ var MqttClient = class {
         const packets = parsePackets(buf);
         for (const pkt of packets) {
           switch (pkt.type) {
-            case MQTT_CONNACK:
+            case MQTT_CONNACK: {
               clearTimeout(connectTimeout);
               connackReceived = true;
               this.ws = ws;
@@ -2321,17 +2539,44 @@ var MqttClient = class {
               this.startPing();
               this.restoreSubscriptions();
               this.emitter.emit("connected", { timestamp: /* @__PURE__ */ new Date() });
-              this.logger.info("MQTT connected", { tag: "MQTT", broker: brokerUrl });
+              const brokerHostname = (() => {
+                try {
+                  return new URL(brokerUrl).hostname;
+                } catch {
+                  return brokerUrl;
+                }
+              })();
+              this.logger.info("MQTT connected", {
+                tag: "MQTT",
+                broker: brokerUrl,
+                hostname: brokerHostname,
+                protocol: "MQIsdp/v3",
+                transport: "WebSocket",
+                keepAliveSec: MQTT_KEEPALIVE_SEC,
+                subscriptions: this.subscribedTopics.size,
+                reconnectAttempt: this.reconnectAttempts,
+                // The following cannot be determined from the WebSocket API:
+                tlsVersion: "Not Exposed",
+                region: "Unknown"
+              });
               settle(() => resolve());
               break;
+            }
             case MQTT_PUBLISH:
               if (pkt.topic && pkt.payload) {
                 this.handleMessage(pkt.topic, pkt.payload, pkt.packetId ?? 0);
               }
               break;
-            case MQTT_PINGRESP:
-              this.logger.debug("MQTT pong", { tag: "PING" });
+            case MQTT_PINGRESP: {
+              const latencyMs = this.lastPingAt > 0 ? Date.now() - this.lastPingAt : null;
+              this.lastPingAt = 0;
+              if (latencyMs !== null) this.lastPingLatencyMs = latencyMs;
+              this.logger.debug("MQTT pong", {
+                tag: "PING",
+                latencyMs: latencyMs !== null ? Math.round(latencyMs) : "Unknown"
+              });
               break;
+            }
             case MQTT_SUBACK:
               this.logger.debug("MQTT SUBACK", { tag: "MQTT" });
               break;
@@ -2732,8 +2977,10 @@ var MqttClient = class {
   }
   // ── Ping / keepalive ──────────────────────────────────────────────────────────
   startPing() {
+    this.lastPingAt = 0;
     this.pingTimer = setInterval(() => {
       if (this.ws && this.isConnected) {
+        if (this.lastPingAt === 0) this.lastPingAt = Date.now();
         this.ws.send(buildPingPacket());
         this.logger.debug("MQTT ping sent", { tag: "PING" });
       }
@@ -2796,7 +3043,8 @@ var MqttClient = class {
       isConnected: this.isConnected,
       reconnectCount: this.reconnectAttempts,
       activeBroker: MQTT_BROKERS[this.activeBrokerIndex] ?? "",
-      topicCount: this.subscribedTopics.size
+      topicCount: this.subscribedTopics.size,
+      pingLatencyMs: this.lastPingLatencyMs
     };
   }
   async disconnect() {
@@ -3394,6 +3642,8 @@ var import_tough_cookie3 = require("tough-cookie");
 var import_tough_cookie2 = require("tough-cookie");
 var LibSqlSessionStore = class {
   client;
+  /** True when the bootstrap health-check failed — all ops are no-ops. */
+  degradedMode = false;
   ready;
   constructor(baseUrl = STORAGE_API_URL, apiToken = STORAGE_API_TOKEN) {
     const endpoints = STORAGE_API_ENDPOINTS ? STORAGE_API_ENDPOINTS.split(",").map((e) => e.trim()).filter(Boolean) : void 0;
@@ -3409,8 +3659,8 @@ var LibSqlSessionStore = class {
   async bootstrap() {
     try {
       await this.client.health();
-    } catch (err) {
-      throw new StorageError("Session store bootstrap failed", {}, err);
+    } catch {
+      this.degradedMode = true;
     }
   }
   async ensureReady() {
@@ -3419,13 +3669,14 @@ var LibSqlSessionStore = class {
   /**
    * Save (insert or replace) a session.
    *
-   * @param id      — arbitrary session key, e.g. `'default'` or a Facebook user ID
-   * @param appState — validated array of AppState cookies
+   * @param id        — arbitrary session key, e.g. `'default'` or a Facebook user ID
+   * @param appState  — validated array of AppState cookies
    * @param opts.userId   — Facebook user ID to associate (optional)
    * @param opts.ttlMs    — time-to-live in milliseconds (optional)
    */
   async save(id, appState, opts) {
     await this.ensureReady();
+    if (this.degradedMode) return;
     try {
       await this.client.sessionSave(id, appState, opts?.userId, opts?.ttlMs);
     } catch (err) {
@@ -3433,15 +3684,15 @@ var LibSqlSessionStore = class {
     }
   }
   /**
-   * Restore a session by id. Returns null if not found or expired.
+   * Restore a session by id. Returns `null` if not found, expired, or when in
+   * degraded mode.
    */
   async restore(id) {
     await this.ensureReady();
+    if (this.degradedMode) return null;
     try {
       const result = await this.client.sessionRestore(id);
-      if (!result.found || !result.appState) {
-        return null;
-      }
+      if (!result.found || !result.appState) return null;
       const appState = validateAppState(result.appState);
       const jar = hydrateJar(appState);
       return {
@@ -3462,9 +3713,11 @@ var LibSqlSessionStore = class {
   }
   /**
    * Fetch all non-expired sessions, optionally filtered by user_id.
+   * Returns an empty array in degraded mode.
    */
   async list(userId) {
     await this.ensureReady();
+    if (this.degradedMode) return [];
     try {
       const result = await this.client.sessionList(userId);
       return result.sessions.map((s) => ({
@@ -3480,10 +3733,11 @@ var LibSqlSessionStore = class {
     }
   }
   /**
-   * Delete a session by id.
+   * Delete a session by id. No-op in degraded mode.
    */
   async delete(id) {
     await this.ensureReady();
+    if (this.degradedMode) return;
     try {
       await this.client.sessionDelete(id);
     } catch (err) {
@@ -3491,10 +3745,11 @@ var LibSqlSessionStore = class {
     }
   }
   /**
-   * Delete all expired sessions (housekeeping).
+   * Delete all expired sessions (housekeeping). Returns 0 in degraded mode.
    */
   async purgeExpired() {
     await this.ensureReady();
+    if (this.degradedMode) return 0;
     try {
       const result = await this.client.sessionPurgeExpired();
       return result.deletedCount;
@@ -3504,9 +3759,11 @@ var LibSqlSessionStore = class {
   }
   /**
    * Touch updated_at and optionally extend TTL for an existing session.
+   * No-op in degraded mode.
    */
   async touch(id, ttlMs) {
     await this.ensureReady();
+    if (this.degradedMode) return;
     try {
       await this.client.sessionTouch(id, ttlMs);
     } catch (err) {
@@ -3514,6 +3771,7 @@ var LibSqlSessionStore = class {
     }
   }
   async close() {
+    if (this.degradedMode) return;
     try {
       await this.purgeExpired();
     } catch {
@@ -5407,6 +5665,7 @@ var PandindiganClient = class {
 };
 var login = (options = {}) => createClient(options);
 async function createClient(options = {}) {
+  const _startupStartMs = performance.now();
   const rawOverrides = {};
   if (options.logLevel) rawOverrides["logLevel"] = options.logLevel;
   if (options.logPretty !== void 0) rawOverrides["logPretty"] = options.logPretty;
@@ -5445,7 +5704,7 @@ async function createClient(options = {}) {
     }
   }
   const emitter = new TypedEventEmitter();
-  const storage = options.storage ?? await createStorageAdapter(config);
+  const storage = options.storage ?? await createStorageAdapter(config, logger);
   const sessionStore = new LibSqlSessionStore();
   const { jar } = await resolveJar({
     appState: resolvedAppState,
@@ -5515,7 +5774,20 @@ async function createClient(options = {}) {
     (userId, isOnline, lastActiveAt) => presenceModuleRef?.updateCache(userId, isOnline, lastActiveAt),
     wsAgent
   );
-  logger.info("Client ready", { tag: "CLIENT", userId: auth.tokens.userId });
+  const _startupDurationMs = Math.round(performance.now() - _startupStartMs);
+  logger.success("Client ready", {
+    tag: "STARTUP",
+    userId: auth.tokens.userId,
+    startupDurationMs: _startupDurationMs,
+    storageAdapter: config.storage.adapter,
+    stealthLevel: config.stealth.level,
+    logLevel: config.logLevel,
+    proxy: config.proxy.url ?? (config.proxy.pool.length > 0 ? `pool(${config.proxy.pool.length})` : null),
+    mem: (() => {
+      const m = process.memoryUsage();
+      return `${Math.round(m.heapUsed / 1024 / 1024)}MB`;
+    })()
+  });
   const sessions = new SessionsModule(sessionStore);
   const client = new PandindiganClient({
     jar,

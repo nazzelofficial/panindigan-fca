@@ -1,7 +1,13 @@
 import { CookieJar } from 'tough-cookie';
 import { hydrateJar, validateAppState, type AppStateCookie } from '../cookies/index.js';
 import { StorageError } from '../errors/index.js';
-import { STORAGE_API_URL, STORAGE_API_ENDPOINTS, STORAGE_API_TOKEN, STORAGE_API_TIMEOUT_MS, STORAGE_API_RETRIES } from '../storage/api-config.js';
+import {
+  STORAGE_API_URL,
+  STORAGE_API_ENDPOINTS,
+  STORAGE_API_TOKEN,
+  STORAGE_API_TIMEOUT_MS,
+  STORAGE_API_RETRIES,
+} from '../storage/api-config.js';
 import { StorageApiClient } from '../storage/api-client.js';
 
 export interface SessionRow {
@@ -16,19 +22,25 @@ export interface SessionRow {
 /**
  * Remote storage-backed session store.
  *
- * Manages session state through a remote HTTPS storage API.
- * The remote worker handles structured session operations including
- * user-id filtering, TTL management, and expiration cleanup.
+ * Manages session state through the remote Panindigan storage API.
+ *
+ * **Reliability contract:** a bootstrap failure (network unavailable, API down,
+ * wrong credentials) never prevents client startup. All operations degrade
+ * gracefully — saves are silently dropped and restores return `null` — so the
+ * bot can still authenticate and run in memory-only mode until the remote
+ * comes back online.
  *
  * @example
  * ```ts
  * const store = new LibSqlSessionStore();
  * await store.save('default', appState, { userId: '100012345' });
- * const { jar, appState } = await store.restore('default') ?? {};
+ * const result = await store.restore('default');
  * ```
  */
 export class LibSqlSessionStore {
   private readonly client: StorageApiClient;
+  /** True when the bootstrap health-check failed — all ops are no-ops. */
+  private degradedMode = false;
   private readonly ready: Promise<void>;
 
   constructor(
@@ -36,7 +48,7 @@ export class LibSqlSessionStore {
     apiToken: string = STORAGE_API_TOKEN,
   ) {
     const endpoints = STORAGE_API_ENDPOINTS
-      ? STORAGE_API_ENDPOINTS.split(',').map(e => e.trim()).filter(Boolean)
+      ? STORAGE_API_ENDPOINTS.split(',').map((e) => e.trim()).filter(Boolean)
       : undefined;
 
     this.client = new StorageApiClient({
@@ -46,26 +58,31 @@ export class LibSqlSessionStore {
       timeoutMs: STORAGE_API_TIMEOUT_MS,
       retries: STORAGE_API_RETRIES,
     });
+
+    // Bootstrap MUST NOT throw — see reliability contract above.
     this.ready = this.bootstrap();
   }
 
   private async bootstrap(): Promise<void> {
     try {
       await this.client.health();
-    } catch (err) {
-      throw new StorageError('Session store bootstrap failed', {}, err);
+    } catch {
+      // Remote is unavailable — operate in degraded mode. Facebook login will
+      // still succeed; sessions just won't be persisted until the remote returns.
+      this.degradedMode = true;
     }
   }
 
   private async ensureReady(): Promise<void> {
     await this.ready;
+    // degradedMode is checked per-operation — do not throw here.
   }
 
   /**
    * Save (insert or replace) a session.
    *
-   * @param id      — arbitrary session key, e.g. `'default'` or a Facebook user ID
-   * @param appState — validated array of AppState cookies
+   * @param id        — arbitrary session key, e.g. `'default'` or a Facebook user ID
+   * @param appState  — validated array of AppState cookies
    * @param opts.userId   — Facebook user ID to associate (optional)
    * @param opts.ttlMs    — time-to-live in milliseconds (optional)
    */
@@ -75,6 +92,8 @@ export class LibSqlSessionStore {
     opts?: { userId?: string; ttlMs?: number },
   ): Promise<void> {
     await this.ensureReady();
+    if (this.degradedMode) return; // silently skip in degraded mode
+
     try {
       await this.client.sessionSave(id, appState as unknown[], opts?.userId, opts?.ttlMs);
     } catch (err) {
@@ -83,15 +102,18 @@ export class LibSqlSessionStore {
   }
 
   /**
-   * Restore a session by id. Returns null if not found or expired.
+   * Restore a session by id. Returns `null` if not found, expired, or when in
+   * degraded mode.
    */
-  async restore(id: string): Promise<{ jar: CookieJar; appState: AppStateCookie[]; row: SessionRow } | null> {
+  async restore(
+    id: string,
+  ): Promise<{ jar: CookieJar; appState: AppStateCookie[]; row: SessionRow } | null> {
     await this.ensureReady();
+    if (this.degradedMode) return null; // no remote to query
+
     try {
       const result = await this.client.sessionRestore(id);
-      if (!result.found || !result.appState) {
-        return null;
-      }
+      if (!result.found || !result.appState) return null;
 
       const appState = validateAppState(result.appState as unknown[]);
       const jar = hydrateJar(appState);
@@ -115,9 +137,12 @@ export class LibSqlSessionStore {
 
   /**
    * Fetch all non-expired sessions, optionally filtered by user_id.
+   * Returns an empty array in degraded mode.
    */
   async list(userId?: string): Promise<SessionRow[]> {
     await this.ensureReady();
+    if (this.degradedMode) return [];
+
     try {
       const result = await this.client.sessionList(userId);
       return result.sessions.map((s) => ({
@@ -134,10 +159,12 @@ export class LibSqlSessionStore {
   }
 
   /**
-   * Delete a session by id.
+   * Delete a session by id. No-op in degraded mode.
    */
   async delete(id: string): Promise<void> {
     await this.ensureReady();
+    if (this.degradedMode) return;
+
     try {
       await this.client.sessionDelete(id);
     } catch (err) {
@@ -146,10 +173,12 @@ export class LibSqlSessionStore {
   }
 
   /**
-   * Delete all expired sessions (housekeeping).
+   * Delete all expired sessions (housekeeping). Returns 0 in degraded mode.
    */
   async purgeExpired(): Promise<number> {
     await this.ensureReady();
+    if (this.degradedMode) return 0;
+
     try {
       const result = await this.client.sessionPurgeExpired();
       return result.deletedCount;
@@ -160,9 +189,12 @@ export class LibSqlSessionStore {
 
   /**
    * Touch updated_at and optionally extend TTL for an existing session.
+   * No-op in degraded mode.
    */
   async touch(id: string, ttlMs?: number): Promise<void> {
     await this.ensureReady();
+    if (this.degradedMode) return;
+
     try {
       await this.client.sessionTouch(id, ttlMs);
     } catch (err) {
@@ -171,10 +203,11 @@ export class LibSqlSessionStore {
   }
 
   async close(): Promise<void> {
+    if (this.degradedMode) return;
     try {
       await this.purgeExpired();
     } catch {
-      // ignore
+      // ignore close errors
     }
   }
 }

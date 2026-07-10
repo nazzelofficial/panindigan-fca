@@ -7,6 +7,53 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+
+## [0.1.6] - 2026-07-10
+
+### Added
+
+#### Remote Storage HA / Failover
+- `LibSqlStorageAdapter` now falls back to an in-memory store when the remote endpoint is unreachable at startup, instead of blocking client creation.
+- Pending writes are queued in memory (capped at 1 000 entries) and replayed automatically when the remote comes back online.
+- A background sync timer (30 s interval) continuously attempts reconnection and flushes the pending-write queue.
+- New `getDiagnostics(): StorageDiagnostics` method exposes connection state, provider, endpoint, pending write count, last error, and last sync timestamp.
+- `StorageDiagnostics` type is exported from the top-level package entry-point.
+- `LibSqlStorageAdapter` now accepts an optional `Logger` parameter for structured internal logging.
+- Storage adapter writes through to in-memory fallback on every `set()` for immediate read consistency, even in connected mode.
+
+#### Session Store Resilience
+- `LibSqlSessionStore.bootstrap()` no longer throws on health-check failure — client startup always succeeds.
+- All session-store operations (`save`, `restore`, `list`, `delete`, `purgeExpired`, `touch`) degrade gracefully in degraded mode: reads return `null`/`[]`; writes are silent no-ops.
+
+#### Professional Logging — SUCCESS Level
+- `Logger` interface now includes `success(msg, ctx?)`, a custom pino level at severity 35 (between INFO=30 and WARN=40), for conveying completed, healthy operations.
+- `createLogger` registers the custom level with pino and, in pretty mode, colours `SUCCESS` messages green.
+- ANSI colour output is auto-detected from `process.stdout.isTTY`, `NO_COLOR`, `FORCE_COLOR`, and `CI` environment variables.
+
+#### MQTT Connection Diagnostics — Real Runtime Data Only
+- CONNACK log now includes `hostname` (extracted from broker URL), `transport`, `protocol`, `keepAliveSec`, and active `subscriptions` count.
+- Fields that cannot be determined at runtime (`tlsVersion`, `region`) are logged as `"Not Exposed"` / `"Unknown"` — never hardcoded or fabricated.
+- Ping latency is measured between PINGREQ send and PINGRESP receive and emitted on every pong as `latencyMs`.
+- `getStats()` now exposes `pingLatencyMs: number | null`.
+
+#### Storage API Client — Exponential Back-off with Jitter
+- HTTP retry loop now uses **full-jitter exponential back-off** (`rand(0, base * 2^attempt)`, capped at 8 s) between retry attempts, preventing thundering-herd effects under high concurrency or transient outages.
+
+#### Client Startup Metrics
+- `createClient()` tracks wall-clock time from first call to client-ready and logs a `success` event with `startupDurationMs`, `storageAdapter`, `stealthLevel`, `logLevel`, `proxy`, and current heap usage.
+- Storage adapter receives the client logger for consistent structured output.
+
+### Fixed
+
+#### `LibSqlStorageAdapter.close()` — Data-wipe Bug
+- **Critical fix:** `close()` previously called `this.client.clear()`, which wiped all remote storage data on every clean shutdown. It now flushes pending writes and stops background timers without touching remote data.
+
+#### `LibSqlSessionStore` — Startup Block
+- `bootstrap()` no longer throws when the remote endpoint is unreachable, ensuring Facebook login always proceeds regardless of storage availability.
+
+---
+
+
 ## [0.1.5] - 2026-07-10
 
 ### Fixed

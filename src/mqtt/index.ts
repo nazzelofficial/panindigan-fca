@@ -249,6 +249,10 @@ export class MqttClient {
     return id;
   }
 
+  // Ping latency tracking — set when PINGREQ is sent, cleared on PINGRESP.
+  private lastPingAt      = 0;
+  private lastPingLatencyMs: number | null = null;
+
   // Reconnect state
   private reconnectAttempts = 0;
   private activeBrokerIndex = 0;
@@ -381,7 +385,7 @@ export class MqttClient {
 
         for (const pkt of packets) {
           switch (pkt.type) {
-            case MQTT_CONNACK:
+            case MQTT_CONNACK: {
               clearTimeout(connectTimeout);
               connackReceived      = true;
               this.ws              = ws;
@@ -392,9 +396,24 @@ export class MqttClient {
               this.startPing();
               this.restoreSubscriptions();
               this.emitter.emit('connected', { timestamp: new Date() });
-              this.logger.info('MQTT connected', { tag: 'MQTT', broker: brokerUrl });
+              // Log real runtime connection info — never hardcode regions or latency.
+              const brokerHostname = (() => { try { return new URL(brokerUrl).hostname; } catch { return brokerUrl; } })();
+              this.logger.info('MQTT connected', {
+                tag: 'MQTT',
+                broker: brokerUrl,
+                hostname: brokerHostname,
+                protocol: 'MQIsdp/v3',
+                transport: 'WebSocket',
+                keepAliveSec: MQTT_KEEPALIVE_SEC,
+                subscriptions: this.subscribedTopics.size,
+                reconnectAttempt: this.reconnectAttempts,
+                // The following cannot be determined from the WebSocket API:
+                tlsVersion: 'Not Exposed',
+                region: 'Unknown',
+              });
               settle(() => resolve());
               break;
+            }
 
             case MQTT_PUBLISH:
               if (pkt.topic && pkt.payload) {
@@ -402,9 +421,16 @@ export class MqttClient {
               }
               break;
 
-            case MQTT_PINGRESP:
-              this.logger.debug('MQTT pong', { tag: 'PING' });
+            case MQTT_PINGRESP: {
+              const latencyMs = this.lastPingAt > 0 ? Date.now() - this.lastPingAt : null;
+              this.lastPingAt = 0;
+              if (latencyMs !== null) this.lastPingLatencyMs = latencyMs;
+              this.logger.debug('MQTT pong', {
+                tag: 'PING',
+                latencyMs: latencyMs !== null ? Math.round(latencyMs) : 'Unknown',
+              });
               break;
+            }
 
             case MQTT_SUBACK:
               this.logger.debug('MQTT SUBACK', { tag: 'MQTT' });
@@ -854,8 +880,12 @@ export class MqttClient {
   // ── Ping / keepalive ──────────────────────────────────────────────────────────
 
   private startPing(): void {
+    this.lastPingAt = 0;
     this.pingTimer = setInterval(() => {
       if (this.ws && this.isConnected) {
+        // Only update lastPingAt when no outstanding ping is in-flight,
+      // so that a slow pong isn't misattributed to a later ping tick.
+        if (this.lastPingAt === 0) this.lastPingAt = Date.now();
         this.ws.send(buildPingPacket());
         this.logger.debug('MQTT ping sent', { tag: 'PING' });
       }
@@ -918,16 +948,18 @@ export class MqttClient {
   }
 
   getStats(): {
-    isConnected:    boolean;
-    reconnectCount: number;
-    activeBroker:   string;
-    topicCount:     number;
+    isConnected:      boolean;
+    reconnectCount:   number;
+    activeBroker:     string;
+    topicCount:       number;
+    pingLatencyMs:    number | null;
   } {
     return {
-      isConnected:    this.isConnected,
-      reconnectCount: this.reconnectAttempts,
-      activeBroker:   MQTT_BROKERS[this.activeBrokerIndex] ?? '',
-      topicCount:     this.subscribedTopics.size,
+      isConnected:      this.isConnected,
+      reconnectCount:   this.reconnectAttempts,
+      activeBroker:     MQTT_BROKERS[this.activeBrokerIndex] ?? '',
+      topicCount:       this.subscribedTopics.size,
+      pingLatencyMs:    this.lastPingLatencyMs,
     };
   }
 

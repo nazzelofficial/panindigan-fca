@@ -59,7 +59,8 @@ describe('auth and storage coverage', () => {
     });
 
     const sendRequest = (client as any).sendRequest('https://example.com', '/v1/health', 'GET', { Accept: 'application/json' }, undefined);
-    await expect(sendRequest).resolves.toEqual({ statusCode: 0, body: '' });
+    // latencyMs is now included in the response shape
+    await expect(sendRequest).resolves.toMatchObject({ statusCode: 0, body: '' });
 
     if (previousRequire === undefined) {
       delete (globalThis as any).require;

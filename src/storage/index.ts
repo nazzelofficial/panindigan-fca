@@ -8,13 +8,14 @@ import { MemoryStorageAdapter } from './memory.js';
 import { FileStorageAdapter } from './file.js';
 import { LibSqlStorageAdapter } from './libsql.js';
 import type { Config } from '../config/index.js';
+import type { Logger } from '../logger/index.js';
 import { ConfigurationError } from '../errors/index.js';
 
-export async function createStorageAdapter(config: Config): Promise<StorageAdapter> {
+export async function createStorageAdapter(config: Config, logger?: Logger): Promise<StorageAdapter> {
   const adapter = config.storage.adapter;
 
   if (adapter === 'libsql') {
-    return new LibSqlStorageAdapter();
+    return new LibSqlStorageAdapter(undefined, undefined, logger);
   }
 
   if (adapter === 'file') {

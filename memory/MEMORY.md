@@ -1,5 +1,2 @@
-- [SOCKS proxy pattern](socks-proxy-pattern.md) — SOCKS must use undici Agent (not Pool); Pool is origin-bound and breaks multi-origin requests.
-- [Attachment upload contract](attachment-upload.md) — Facebook upload response must contain a real fbid/attachment_id; never fall back to client-generated IDs.
-- [Health event semantics](health-events.md) — account:healthy must only fire when healthCheck ok===true; prevents false-positive event flood.
-- [Zod timestamp schema](zod-timestamp-schema.md) — TimestampSchema must handle numeric strings, bare numbers, AND ISO strings; Number() of ISO gives NaN.
-- [Facebook response shapes](fb-response-shapes.md) — Thread list uses edges[].node (not nodes); both search types use data.search_results.edges[]; presence uses data.user.presence_data.
+- [Storage failover design](storage-failover.md) — LibSqlStorageAdapter uses in-memory fallback + FIFO pending-write queue; close() must never call clear(); isSyncing guards concurrent replays.
+- [Pino custom levels](pino-custom-levels.md) — Use `pino.Logger<string, boolean>` alias and cast the return of pino() to avoid TypeScript generic conflict when adding customLevels.
