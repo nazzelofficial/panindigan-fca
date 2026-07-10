@@ -7,6 +7,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.4] - 2026-07-10
+
+### Fixed
+
+#### TypeScript declaration files missing from published package
+- Configured tsup to generate both `.d.ts` (ESM) and `.d.cts` (CJS) declaration files
+- Created `tsup.config.ts` with proper `dts.compilerOptions.ignoreDeprecations: '6.0'` to silence TypeScript 7.0 deprecation warnings
+- Updated build script to use tsup config instead of CLI arguments
+- Verified npm tarball contains all required files:
+  - `dist/index.js` (ESM)
+  - `dist/index.cjs` (CJS)
+  - `dist/index.d.ts` (ESM declarations)
+  - `dist/index.d.cts` (CJS declarations)
+- Created TypeScript consumer test project with strict mode enabled
+- Verified `import { createClient } from 'panindigan-fca'` compiles without TS7016 errors
+- No `skipLibCheck` or `declare module` workarounds used
+
+---
+
 ## [0.1.3] - 2026-07-10
 
 ### Fixed
