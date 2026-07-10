@@ -996,7 +996,7 @@ var StorageApiClient = class {
   }
   sendRequest(endpoint, path, method, headers, payload) {
     return new Promise((resolve, reject) => {
-      const transport = endpoint.startsWith("https://") ? __require("https") : __require("http");
+      const transport = this.getTransport(endpoint);
       const request = transport.request(
         this.buildUrl(endpoint, path),
         {
@@ -1027,6 +1027,14 @@ var StorageApiClient = class {
       }
       request.end();
     });
+  }
+  getTransport(endpoint) {
+    const moduleName = endpoint.startsWith("https://") ? "https" : "http";
+    const globalRequire = globalThis.require;
+    if (globalRequire) {
+      return globalRequire(moduleName);
+    }
+    return __require(moduleName);
   }
   buildUrl(endpoint, path) {
     const normalizedEndpoint = endpoint.endsWith("/") ? endpoint.slice(0, -1) : endpoint;

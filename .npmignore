@@ -1,0 +1,59 @@
+# Source files
+src/
+tsconfig*.json
+
+# Test files
+tests/
+vitest.config.ts
+coverage/
+
+# Lock files
+bun.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Config files
+bunfig.toml
+.eslintrc*
+.prettierrc*
+.gitattributes
+
+# Environment files
+.env
+.env.*
+
+# Git
+.git/
+.gitignore
+
+# Node modules
+node_modules/
+
+# Development directories
+memory/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts (keep dist/ via files field)
+*.tsbuildinfo
+
+# Documentation (keep README.md, LICENSE via files field)
+CHANGELOG.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+SECURITY.md

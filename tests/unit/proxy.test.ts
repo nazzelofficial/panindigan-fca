@@ -6,9 +6,49 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { ProxyManager, maskProxyUrl, resolveProxyUrl, type ProxyOptions } from '../../src/proxy/index.js';
 import { ConfigurationError } from '../../src/errors/index.js';
 import { loadConfig } from '../../src/config/index.js';
+
+const { createConnectionMock, tlsConnectMock, netConnectMock, agentConstructorMock, proxyAgentConstructorMock } = vi.hoisted(() => ({
+  createConnectionMock: vi.fn(),
+  tlsConnectMock: vi.fn(),
+  netConnectMock: vi.fn(),
+  agentConstructorMock: vi.fn(),
+  proxyAgentConstructorMock: vi.fn(),
+}));
+
+vi.mock('socks', () => ({
+  SocksClient: { createConnection: createConnectionMock },
+}));
+
+vi.mock('node:tls', () => ({
+  connect: tlsConnectMock,
+}));
+
+vi.mock('node:net', () => ({
+  connect: netConnectMock,
+}));
+
+vi.mock('undici', () => ({
+  Agent: class {
+    public readonly options: unknown;
+    constructor(options: unknown) {
+      this.options = options;
+      agentConstructorMock(options);
+    }
+    close = vi.fn().mockResolvedValue(undefined);
+  },
+  ProxyAgent: class {
+    public readonly options: unknown;
+    constructor(options: unknown) {
+      this.options = options;
+      proxyAgentConstructorMock(options);
+    }
+    close = vi.fn().mockResolvedValue(undefined);
+  },
+}));
 
 // ─── maskProxyUrl ─────────────────────────────────────────────────────────────
 
@@ -196,6 +236,14 @@ describe('loadConfig — PFCA_PROXY_URL env var', () => {
 // ─── ProxyManager — agent reuse ───────────────────────────────────────────────
 
 describe('ProxyManager — connection reuse', () => {
+  beforeEach(() => {
+    createConnectionMock.mockReset();
+    tlsConnectMock.mockReset();
+    netConnectMock.mockReset();
+    agentConstructorMock.mockReset();
+    proxyAgentConstructorMock.mockReset();
+  });
+
   it('returns the same undici dispatcher on repeated calls', async () => {
     const mgr = new ProxyManager('http://127.0.0.1:8080');
     const d1 = await mgr.getUndiciDispatcher(10, 5000);
@@ -210,5 +258,135 @@ describe('ProxyManager — connection reuse', () => {
     const a2 = await mgr.getWebSocketAgent();
     expect(a1).toBe(a2); // same reference — not recreated
     await mgr.close();
+  });
+
+  it('builds SOCKS and HTTP CONNECT agents for different proxy types', async () => {
+    const socksManager = new ProxyManager('socks5://user:pass@127.0.0.1:1080');
+    const socksDispatcher = await socksManager.getUndiciDispatcher(4, 1000);
+    expect(socksDispatcher).toBeDefined();
+
+    const httpManager = new ProxyManager('http://127.0.0.1:8080');
+    const wsAgent = await httpManager.getWebSocketAgent();
+    expect(wsAgent).toBeDefined();
+
+    await socksManager.close();
+    await httpManager.close();
+  });
+
+  it('invokes the SOCKS WebSocket and undici connect callbacks', async () => {
+    const socksManager = new ProxyManager('socks5://user:pass@127.0.0.1:1080');
+    const wsAgent = await socksManager.getWebSocketAgent();
+    const tlsSocket = new EventEmitter() as EventEmitter & { once: typeof EventEmitter.prototype.once };
+    tlsConnectMock.mockReturnValue(tlsSocket as never);
+    createConnectionMock.mockResolvedValue({ socket: new EventEmitter() as never });
+
+    const callback = vi.fn();
+    (wsAgent as never).createConnection({ host: 'facebook.com', port: 443, servername: 'facebook.com' }, callback);
+    await Promise.resolve();
+    tlsSocket.emit('secureConnect');
+
+    expect(createConnectionMock).toHaveBeenCalled();
+    expect(callback).toHaveBeenCalledWith(null, tlsSocket);
+
+    const dispatcher = await socksManager.getUndiciDispatcher(4, 1000);
+    const undiciConnect = (dispatcher as never).options.connect;
+    const undiciCallback = vi.fn();
+    undiciConnect({ hostname: 'facebook.com', port: '443', protocol: 'https:' }, undiciCallback);
+    await Promise.resolve();
+    tlsSocket.emit('secureConnect');
+
+    expect(undiciCallback).toHaveBeenCalledWith(null, tlsSocket);
+    await socksManager.close();
+  });
+
+  it('handles CONNECT tunnel failures and raw socket errors', async () => {
+    const httpManager = new ProxyManager('http://127.0.0.1:8080');
+    const wsAgent = await httpManager.getWebSocketAgent();
+
+    const proxySocket = new EventEmitter() as EventEmitter & {
+      write: ReturnType<typeof vi.fn>;
+      destroy: ReturnType<typeof vi.fn>;
+      unshift: ReturnType<typeof vi.fn>;
+    };
+    proxySocket.write = vi.fn();
+    proxySocket.destroy = vi.fn();
+    proxySocket.unshift = vi.fn();
+    netConnectMock.mockReturnValue(proxySocket as never);
+
+    const callback = vi.fn();
+    (wsAgent as never).createConnection({ host: 'facebook.com', port: 443 }, callback);
+    proxySocket.emit('connect');
+    proxySocket.emit('data', Buffer.from('HTTP/1.1 403 Forbidden\r\n\r\n'));
+
+    expect(callback).toHaveBeenCalledWith(expect.any(Error), null);
+
+    const secondCallback = vi.fn();
+    (wsAgent as never).createConnection({ host: 'facebook.com', port: 443 }, secondCallback);
+    proxySocket.emit('error', new Error('socket down'));
+
+    expect(secondCallback).toHaveBeenCalledWith(expect.any(Error), null);
+    await httpManager.close();
+  });
+
+  it('handles SOCKS WebSocket agent connection errors', async () => {
+    const socksManager = new ProxyManager('socks5://user:pass@127.0.0.1:1080');
+    const wsAgent = await socksManager.getWebSocketAgent();
+    
+    const tlsSocket = new EventEmitter() as EventEmitter & { once: typeof EventEmitter.prototype.once };
+    tlsConnectMock.mockReturnValue(tlsSocket as never);
+    createConnectionMock.mockRejectedValueOnce(new Error('SOCKS connection failed'));
+    
+    const callback = vi.fn();
+    (wsAgent as never).createConnection({ host: 'facebook.com', port: 443 }, callback);
+    
+    // Wait for the promise to be rejected
+    await new Promise(resolve => setTimeout(resolve, 10));
+    
+    expect(callback).toHaveBeenCalledWith(expect.any(Error), null);
+    await socksManager.close();
+  });
+
+  it('handles CONNECT tunnel with remaining TLS handshake bytes', async () => {
+    const httpManager = new ProxyManager('http://127.0.0.1:8080');
+    const wsAgent = await httpManager.getWebSocketAgent();
+
+    const proxySocket = new EventEmitter() as EventEmitter & {
+      write: ReturnType<typeof vi.fn>;
+      destroy: ReturnType<typeof vi.fn>;
+      unshift: ReturnType<typeof vi.fn>;
+    };
+    proxySocket.write = vi.fn();
+    proxySocket.destroy = vi.fn();
+    proxySocket.unshift = vi.fn();
+    netConnectMock.mockReturnValue(proxySocket as never);
+
+    const tlsSocket = new EventEmitter() as EventEmitter & { once: typeof EventEmitter.prototype.once };
+    tlsConnectMock.mockReturnValue(tlsSocket as never);
+
+    const callback = vi.fn();
+    (wsAgent as never).createConnection({ host: 'facebook.com', port: 443 }, callback);
+    proxySocket.emit('connect');
+    // Send CONNECT response with some TLS handshake bytes in the same chunk
+    proxySocket.emit('data', Buffer.from('HTTP/1.1 200 OK\r\n\r\n\x16\x03\x01'));
+
+    expect(proxySocket.unshift).toHaveBeenCalled();
+    await httpManager.close();
+  });
+
+  it('handles SOCKS undici agent for non-HTTPS connections', async () => {
+    const socksManager = new ProxyManager('socks5://127.0.0.1:1080');
+    const dispatcher = await socksManager.getUndiciDispatcher(4, 1000);
+    
+    const plainSocket = new EventEmitter() as EventEmitter & { once: typeof EventEmitter.prototype.once };
+    createConnectionMock.mockResolvedValue({ socket: plainSocket as never });
+
+    const callback = vi.fn();
+    const undiciConnect = (dispatcher as never).options.connect;
+    undiciConnect({ hostname: 'example.com', port: '80', protocol: 'http:' }, callback);
+    await Promise.resolve();
+    
+    // For non-HTTPS, it should call callback directly with the socket
+    expect(callback).toHaveBeenCalledWith(null, plainSocket);
+    await socksManager.close();
   });
 });

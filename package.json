@@ -4,7 +4,6 @@
   "description": "Modern TypeScript library for building Facebook Messenger bots using personal accounts.",
   "license": "MIT",
   "author": "Nazzel",
-
   "homepage": "https://github.com/nazzelofficial/panindigan-fca#readme",
   "repository": {
     "type": "git",
@@ -13,71 +12,70 @@
   "bugs": {
     "url": "https://github.com/nazzelofficial/panindigan-fca/issues"
   },
-
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/nazzelofficial"
+  },
   "type": "module",
-
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
       "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
-
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
-
   "sideEffects": false,
-
+  "packageManager": "bun@1.3.14",
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean",
-    "dev": "tsup src/index.ts --format esm --dts --watch",
-    "typecheck": "tsc --noEmit",
-
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:bench": "vitest bench",
-
     "lint": "eslint src --ext .ts",
-    "format": "prettier --write src",
-
-    "prepublishOnly": "bun run typecheck && bun run build"
+    "format": "prettier --write .",
+    "clean": "rimraf dist coverage",
+    "prepublishOnly": "bun run typecheck && bun run build",
+    "release": "bun run typecheck && bun run build && npm publish --access public"
   },
-
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "bun": ">=1.3.14"
   },
-
   "publishConfig": {
     "access": "public"
   },
-
   "keywords": [
     "facebook",
     "facebook-messenger",
     "facebook-chat-api",
     "messenger",
-    "fca",
     "chat",
     "bot",
     "automation",
+    "fca",
     "typescript",
     "appstate",
     "mqtt",
-    "messaging"
+    "messaging",
+    "facebook-api",
+    "facebook-bot",
+    "messenger-bot"
   ],
-
   "dependencies": {
     "colorette": "^2.0.20",
     "date-fns": "^4.4.0",
@@ -100,7 +98,6 @@
     "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
-
   "devDependencies": {
     "@types/mime-types": "^3.0.1",
     "@types/node": "^26.1.1",
@@ -108,8 +105,10 @@
     "@types/user-agents": "^1.0.4",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.10",
+    "rimraf": "^6.0.1",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
+    "vite": "^8.1.4",
     "vitest": "^4.1.10"
   }
 }

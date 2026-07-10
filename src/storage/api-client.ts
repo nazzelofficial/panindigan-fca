@@ -324,9 +324,7 @@ export class StorageApiClient {
     payload?: string,
   ): Promise<HttpClientResponse> {
     return new Promise<HttpClientResponse>((resolve, reject) => {
-      const transport = endpoint.startsWith('https://')
-        ? (require('https') as HttpModuleLike)
-        : (require('http') as HttpModuleLike);
+      const transport = this.getTransport(endpoint);
       const request = transport.request(
         this.buildUrl(endpoint, path),
         {
@@ -360,6 +358,15 @@ export class StorageApiClient {
 
       request.end();
     });
+  }
+
+  private getTransport(endpoint: string): HttpModuleLike {
+    const moduleName = endpoint.startsWith('https://') ? 'https' : 'http';
+    const globalRequire = (globalThis as typeof globalThis & { require?: (moduleName: string) => unknown }).require;
+    if (globalRequire) {
+      return globalRequire(moduleName) as HttpModuleLike;
+    }
+    return require(moduleName) as HttpModuleLike;
   }
 
   private buildUrl(endpoint: string, path: string): string {
