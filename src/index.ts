@@ -155,7 +155,8 @@ export { StealthManager, generateFingerprint, buildStealthHeaders, humanDelay } 
 export type { BrowserFingerprint } from './stealth/index.js';
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
-export { CacheManager, nsKey } from './cache/index.js';
+export { CacheManager, nsKey, normalizeCacheOptions, DEFAULT_CACHE_MAX_SIZE, DEFAULT_CACHE_TTL_MS } from './cache/index.js';
+export type { CacheManagerOptions } from './cache/index.js';
 
 // ─── Crypto utilities ─────────────────────────────────────────────────────────
 export { encrypt, decrypt, hmac, randomHex, cryptoRandomInt, cryptoRandomFloat } from './crypto/index.js';

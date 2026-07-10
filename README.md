@@ -829,6 +829,26 @@ The `LibSqlSessionStore` manages sessions through remote API endpoints with stru
 | Compression | Optional gzip compression for large cached values |
 | Redis Adapter | Optional `ioredis`-backed adapter for shared cache across processes |
 
+Cache configuration is always safe by construction — `CacheManager` normalizes its options
+before ever constructing the underlying `lru-cache` instance, so it works with zero
+configuration and cannot throw the `lru-cache` "at least one of max, maxSize, or ttl is
+required" error, even if `maxSize`/`ttl` come through as `undefined` or invalid:
+
+```ts
+import { CacheManager, normalizeCacheOptions } from 'panindigan-fca';
+
+// No options needed — defaults to max: 1000 entries, ttl: 30 minutes.
+const cache = new CacheManager();
+
+// Explicit options are merged with (not replaced by) the defaults, and
+// out-of-range values (maxSize <= 0, ttl < 0) are normalized back to the
+// default instead of throwing.
+const customCache = new CacheManager({ maxSize: 2000, ttlMs: 60_000 });
+
+// Inspect what a given set of options would resolve to:
+normalizeCacheOptions({ maxSize: -1 }); // → { max: 1000, ttl: 1_800_000, updateAgeOnGet: false }
+```
+
 ---
 
 ## Security

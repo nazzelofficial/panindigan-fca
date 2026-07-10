@@ -7,6 +7,22 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.2] - 2026-07-10
+
+### Fixed
+
+#### Cache initialization crash — `TypeError: At least one of max, maxSize, or ttl is required`
+- Root cause: with no `cache` overrides, the Zod v4 config schema's nested `.default(() => ({}))` did not backfill the inner `maxSize`/`ttl` field defaults, so `config.cache` could resolve to `{}` — leaving `maxSize`/`ttl` `undefined`. Those `undefined` values were passed straight into `lru-cache` v11+'s constructor, which throws when none of `max`, `maxSize`, or `ttl` are set. This crash occurred immediately after AppState loaded successfully, before Facebook authentication began, on every login path (AppState array, `APPSTATE` env var, `appstate.json`, email/password, proxy).
+- Fixed the config schema so `cache` always resolves with valid `ttl`/`maxSize` defaults (300000ms / 500 entries) even when no overrides are supplied.
+- Hardened `CacheManager` itself with a new `normalizeCacheOptions()` function as defense in depth: every `LRUCache` construction now goes through validated options, so the crash cannot recur even if a future caller passes `undefined`/invalid values directly.
+  - Missing or non-finite `maxSize`/`ttlMs` now fall back to safe defaults (`max: 1000`, `ttl: 30 minutes`) instead of reaching `LRUCache` unset.
+  - Invalid explicit values (`maxSize <= 0`, `ttl < 0`) are normalized back to the defaults instead of throwing.
+  - User-supplied cache options are merged with defaults, never used to silently replace them — `ttlMs: 0` (disable expiry) is still honored since it's a valid, explicit value.
+  - `CacheManager` now accepts zero arguments (`new CacheManager()`) for full backward compatibility with existing `createClient(...)` call sites.
+  - `updateAgeOnGet` defaults to `false`, preserving the exact pre-0.1.2 fixed-TTL eviction behavior for `createClient(...)`; pass `updateAgeOnGet: true` explicitly to opt into sliding-TTL-on-read.
+- Exported `normalizeCacheOptions`, `CacheManagerOptions`, `DEFAULT_CACHE_MAX_SIZE`, and `DEFAULT_CACHE_TTL_MS` from the package root for advanced use.
+- Added unit tests covering default/backfilled construction, custom `maxSize`/`ttlMs`, invalid-value normalization, `updateAgeOnGet`, and the exact `loadConfig()` → `CacheManager` path that previously crashed.
+
 ## [0.1.1] - 2026-07-10
 
 ### Added

@@ -585,7 +585,7 @@ var configSchema = z.object({
   cache: z.object({
     ttl: z.number().int().min(0).default(3e5),
     maxSize: z.number().int().min(1).default(500)
-  }).default(() => ({})),
+  }).default(() => ({ ttl: 3e5, maxSize: 500 })),
   session: z.object({
     persistPath: z.string().nullable().default(null),
     restoreOnStart: z.boolean().default(true)
@@ -1169,15 +1169,29 @@ async function createStorageAdapter(config) {
 
 // src/cache/index.ts
 import { LRUCache } from "lru-cache";
+var DEFAULT_CACHE_MAX_SIZE = 1e3;
+var DEFAULT_CACHE_TTL_MS = 1e3 * 60 * 30;
+function normalizeCacheOptions(options) {
+  const rawMax = options?.maxSize;
+  const max = typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax > 0 ? Math.floor(rawMax) : DEFAULT_CACHE_MAX_SIZE;
+  const rawTtl = options?.ttlMs;
+  const ttl = typeof rawTtl === "number" && Number.isFinite(rawTtl) && rawTtl >= 0 ? Math.floor(rawTtl) : DEFAULT_CACHE_TTL_MS;
+  return {
+    max,
+    ttl,
+    updateAgeOnGet: options?.updateAgeOnGet ?? false
+  };
+}
 var CacheManager = class {
   lru;
   hitCount = 0;
   missCount = 0;
-  constructor(options) {
+  constructor(options = {}) {
+    const normalized = normalizeCacheOptions(options);
     this.lru = new LRUCache({
-      max: options.maxSize,
-      ttl: options.ttlMs,
-      updateAgeOnGet: false,
+      max: normalized.max,
+      ttl: normalized.ttl,
+      updateAgeOnGet: normalized.updateAgeOnGet,
       updateAgeOnHas: false
     });
   }
@@ -6048,6 +6062,8 @@ export {
   CheckpointRequiredError,
   ConfigurationError,
   ConnectionError,
+  DEFAULT_CACHE_MAX_SIZE,
+  DEFAULT_CACHE_TTL_MS,
   DNSError,
   DeserializationError,
   DiagnosticsModule,
@@ -6136,6 +6152,7 @@ export {
   makeFormRequestSpec,
   makeMultipartRequestSpec,
   maskProxyUrl,
+  normalizeCacheOptions,
   nsKey,
   parseFriendListResponse,
   parseLoginResponse,

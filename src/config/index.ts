@@ -40,7 +40,7 @@ export const configSchema = z.object({
   cache: z.object({
     ttl: z.number().int().min(0).default(300000),
     maxSize: z.number().int().min(1).default(500),
-  }).default(() => ({} as any)),
+  }).default(() => ({ ttl: 300000, maxSize: 500 })),
 
   session: z.object({
     persistPath: z.string().nullable().default(null),

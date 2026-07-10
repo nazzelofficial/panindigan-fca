@@ -39,6 +39,8 @@ __export(index_exports, {
   CheckpointRequiredError: () => CheckpointRequiredError,
   ConfigurationError: () => ConfigurationError,
   ConnectionError: () => ConnectionError,
+  DEFAULT_CACHE_MAX_SIZE: () => DEFAULT_CACHE_MAX_SIZE,
+  DEFAULT_CACHE_TTL_MS: () => DEFAULT_CACHE_TTL_MS,
   DNSError: () => DNSError,
   DeserializationError: () => DeserializationError,
   DiagnosticsModule: () => DiagnosticsModule,
@@ -127,6 +129,7 @@ __export(index_exports, {
   makeFormRequestSpec: () => makeFormRequestSpec,
   makeMultipartRequestSpec: () => makeMultipartRequestSpec,
   maskProxyUrl: () => maskProxyUrl,
+  normalizeCacheOptions: () => normalizeCacheOptions,
   nsKey: () => nsKey,
   parseFriendListResponse: () => parseFriendListResponse,
   parseLoginResponse: () => parseLoginResponse,
@@ -729,7 +732,7 @@ var configSchema = import_zod.z.object({
   cache: import_zod.z.object({
     ttl: import_zod.z.number().int().min(0).default(3e5),
     maxSize: import_zod.z.number().int().min(1).default(500)
-  }).default(() => ({})),
+  }).default(() => ({ ttl: 3e5, maxSize: 500 })),
   session: import_zod.z.object({
     persistPath: import_zod.z.string().nullable().default(null),
     restoreOnStart: import_zod.z.boolean().default(true)
@@ -1313,15 +1316,29 @@ async function createStorageAdapter(config) {
 
 // src/cache/index.ts
 var import_lru_cache = require("lru-cache");
+var DEFAULT_CACHE_MAX_SIZE = 1e3;
+var DEFAULT_CACHE_TTL_MS = 1e3 * 60 * 30;
+function normalizeCacheOptions(options) {
+  const rawMax = options?.maxSize;
+  const max = typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax > 0 ? Math.floor(rawMax) : DEFAULT_CACHE_MAX_SIZE;
+  const rawTtl = options?.ttlMs;
+  const ttl = typeof rawTtl === "number" && Number.isFinite(rawTtl) && rawTtl >= 0 ? Math.floor(rawTtl) : DEFAULT_CACHE_TTL_MS;
+  return {
+    max,
+    ttl,
+    updateAgeOnGet: options?.updateAgeOnGet ?? false
+  };
+}
 var CacheManager = class {
   lru;
   hitCount = 0;
   missCount = 0;
-  constructor(options) {
+  constructor(options = {}) {
+    const normalized = normalizeCacheOptions(options);
     this.lru = new import_lru_cache.LRUCache({
-      max: options.maxSize,
-      ttl: options.ttlMs,
-      updateAgeOnGet: false,
+      max: normalized.max,
+      ttl: normalized.ttl,
+      updateAgeOnGet: normalized.updateAgeOnGet,
       updateAgeOnHas: false
     });
   }
@@ -6193,6 +6210,8 @@ function parseLoginResponse(text) {
   CheckpointRequiredError,
   ConfigurationError,
   ConnectionError,
+  DEFAULT_CACHE_MAX_SIZE,
+  DEFAULT_CACHE_TTL_MS,
   DNSError,
   DeserializationError,
   DiagnosticsModule,
@@ -6281,6 +6300,7 @@ function parseLoginResponse(text) {
   makeFormRequestSpec,
   makeMultipartRequestSpec,
   maskProxyUrl,
+  normalizeCacheOptions,
   nsKey,
   parseFriendListResponse,
   parseLoginResponse,
