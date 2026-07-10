@@ -104,38 +104,51 @@ export class StealthManager {
   readonly fingerprint: BrowserFingerprint;
   private requestCount = 0;
   private warmupStartTime: number | null = null;
+  private readonly normalizedConfig: Required<Config['stealth']>;
 
   constructor(
-    private readonly config: Config['stealth'],
+    config: Config['stealth'],
     private readonly emitter: TypedEventEmitter,
     private readonly logger: Logger,
   ) {
-    const seed = config.fingerprint.seed ?? config.userAgent.seed ?? randomHex(8);
-    this.fingerprint = config.fingerprint.enabled ? generateFingerprint(seed) : generateFingerprint();
-    if (config.fingerprint.enabled) {
+    // Normalize nested config objects to prevent undefined access
+    this.normalizedConfig = {
+      level: config.level ?? 'medium',
+      delays: config.delays ?? { enabled: true, actionDelay: { min: 300, max: 1800 }, messageDelay: { min: 800, max: 4000 }, paginationDelay: { min: 200, max: 900 } },
+      typingSimulation: config.typingSimulation ?? { enabled: true, wpm: { min: 40, max: 80 }, naturalPauses: true },
+      rateLimit: config.rateLimit ?? { enabled: true, requestsPerMinute: 30, minInterval: 500, onOverload: 'queue' },
+      userAgent: config.userAgent ?? { enabled: true, seed: null },
+      fingerprint: config.fingerprint ?? { enabled: true, consistent: true, seed: null },
+      warmup: config.warmup ?? { enabled: false, duration: 30, startFraction: 0.1, emitEvent: true },
+    };
+
+    // Generate seed if not provided or invalid
+    const seed = this.normalizedConfig.fingerprint.seed || this.normalizedConfig.userAgent.seed || randomHex(8);
+    this.fingerprint = this.normalizedConfig.fingerprint.enabled ? generateFingerprint(seed) : generateFingerprint();
+    if (this.normalizedConfig.fingerprint.enabled) {
       emitter.emit('stealth:fingerprint:assigned', {
         userAgent: this.fingerprint.userAgent,
         platform: this.fingerprint.platform,
         locale: this.fingerprint.locale,
       });
     }
-    if (config.warmup.enabled) {
+    if (this.normalizedConfig.warmup.enabled) {
       this.warmupStartTime = Date.now();
-      emitter.emit('stealth:warmup:start', { targetRateLimitRpm: config.rateLimit.requestsPerMinute });
-      logger.info('Stealth warm-up started', { tag: 'STEALTH', duration: config.warmup.duration });
+      emitter.emit('stealth:warmup:start', { targetRateLimitRpm: this.normalizedConfig.rateLimit.requestsPerMinute });
+      logger.info('Stealth warm-up started', { tag: 'STEALTH', duration: this.normalizedConfig.warmup.duration });
     }
   }
 
   getHeaders(referer?: string): Record<string, string> {
-    const level = this.config.level;
+    const level = this.normalizedConfig.level;
     if (level === 'off') return {};
     return buildStealthHeaders(this.fingerprint, referer);
   }
 
   isWarmupComplete(): boolean {
-    if (!this.config.warmup.enabled || this.warmupStartTime === null) return true;
+    if (!this.normalizedConfig.warmup.enabled || this.warmupStartTime === null) return true;
     const elapsed = Date.now() - this.warmupStartTime;
-    const durationMs = this.config.warmup.duration * 60 * 1000;
+    const durationMs = this.normalizedConfig.warmup.duration * 60 * 1000;
     if (elapsed >= durationMs) {
       this.emitter.emit('stealth:warmup:complete', { durationMs: elapsed });
       this.warmupStartTime = null;
@@ -145,14 +158,14 @@ export class StealthManager {
   }
 
   getCurrentRateLimit(): number {
-    if (!this.config.warmup.enabled || this.isWarmupComplete()) {
-      return this.config.rateLimit.requestsPerMinute;
+    if (!this.normalizedConfig.warmup.enabled || this.isWarmupComplete()) {
+      return this.normalizedConfig.rateLimit.requestsPerMinute;
     }
     const elapsed = Date.now() - (this.warmupStartTime ?? Date.now());
-    const durationMs = this.config.warmup.duration * 60 * 1000;
+    const durationMs = this.normalizedConfig.warmup.duration * 60 * 1000;
     const progress = Math.min(elapsed / durationMs, 1);
-    const fraction = this.config.warmup.startFraction + (1 - this.config.warmup.startFraction) * progress;
-    return Math.max(1, Math.round(this.config.rateLimit.requestsPerMinute * fraction));
+    const fraction = this.normalizedConfig.warmup.startFraction + (1 - this.normalizedConfig.warmup.startFraction) * progress;
+    return Math.max(1, Math.round(this.normalizedConfig.rateLimit.requestsPerMinute * fraction));
   }
 
   incrementRequestCount(): void {

@@ -20,72 +20,72 @@ export const configSchema = z.object({
       connect: z.number().int().min(100).default(5000),
       request: z.number().int().min(1000).default(30000),
       body: z.number().int().min(1000).default(60000),
-    }).default(() => ({} as any)),
+    }).default({ connect: 5000, request: 30000, body: 60000 }),
     retries: z.object({
       max: z.number().int().min(0).max(20).default(5),
       baseDelay: z.number().int().min(100).default(500),
-    }).default(() => ({} as any)),
-  }).default(() => ({} as any)),
+    }).default({ max: 5, baseDelay: 500 }),
+  }).default({ maxConnections: 10, timeout: { connect: 5000, request: 30000, body: 60000 }, retries: { max: 5, baseDelay: 500 } }),
 
   mqtt: z.object({
     reconnect: z.object({
       maxAttempts: z.number().int().min(0).default(10),
       baseDelay: z.number().int().min(100).default(1000),
-    }).default(() => ({} as any)),
+    }).default({ maxAttempts: 10, baseDelay: 1000 }),
     heartbeat: z.object({
       interval: z.number().int().min(5000).default(60000),
-    }).default(() => ({} as any)),
-  }).default(() => ({} as any)),
+    }).default({ interval: 60000 }),
+  }).default({ reconnect: { maxAttempts: 10, baseDelay: 1000 }, heartbeat: { interval: 60000 } }),
 
   cache: z.object({
     ttl: z.number().int().min(0).default(300000),
     maxSize: z.number().int().min(1).default(500),
-  }).default(() => ({ ttl: 300000, maxSize: 500 })),
+  }).default({ ttl: 300000, maxSize: 500 }),
 
   session: z.object({
     persistPath: z.string().nullable().default(null),
     restoreOnStart: z.boolean().default(true),
-  }).default(() => ({} as any)),
+  }).default({ persistPath: null, restoreOnStart: true }),
 
   storage: z.object({
     adapter: storageAdapterSchema.default('libsql'),
-  }).default(() => ({} as any)),
+  }).default({ adapter: 'libsql' }),
 
   stealth: z.object({
     level: stealthLevelSchema.default('medium'),
     delays: z.object({
       enabled: z.boolean().default(true),
-      actionDelay: z.object({ min: z.number().default(300), max: z.number().default(1800) }).default(() => ({} as any)),
-      messageDelay: z.object({ min: z.number().default(800), max: z.number().default(4000) }).default(() => ({} as any)),
-      paginationDelay: z.object({ min: z.number().default(200), max: z.number().default(900) }).default(() => ({} as any)),
-    }).default(() => ({} as any)),
+      actionDelay: z.object({ min: z.number().default(300), max: z.number().default(1800) }).default({ min: 300, max: 1800 }),
+      messageDelay: z.object({ min: z.number().default(800), max: z.number().default(4000) }).default({ min: 800, max: 4000 }),
+      paginationDelay: z.object({ min: z.number().default(200), max: z.number().default(900) }).default({ min: 200, max: 900 }),
+    }).default({ enabled: true, actionDelay: { min: 300, max: 1800 }, messageDelay: { min: 800, max: 4000 }, paginationDelay: { min: 200, max: 900 } }),
     typingSimulation: z.object({
       enabled: z.boolean().default(true),
-      wpm: z.object({ min: z.number().default(40), max: z.number().default(80) }).default(() => ({} as any)),
+      wpm: z.object({ min: z.number().default(40), max: z.number().default(80) }).default({ min: 40, max: 80 }),
       naturalPauses: z.boolean().default(true),
-    }).default(() => ({} as any)),
+    }).default({ enabled: true, wpm: { min: 40, max: 80 }, naturalPauses: true }),
     rateLimit: z.object({
       enabled: z.boolean().default(true),
       requestsPerMinute: z.number().int().min(1).default(30),
       minInterval: z.number().int().min(0).default(500),
       onOverload: z.enum(['queue', 'drop', 'throw']).default('queue'),
-    }).default(() => ({} as any)),
+    }).default({ enabled: true, requestsPerMinute: 30, minInterval: 500, onOverload: 'queue' }),
     userAgent: z.object({
       enabled: z.boolean().default(true),
       seed: z.string().nullable().default(null),
-    }).default(() => ({} as any)),
+    }).default({ enabled: true, seed: null }),
     fingerprint: z.object({
       enabled: z.boolean().default(true),
       consistent: z.boolean().default(true),
       seed: z.string().nullable().default(null),
-    }).default(() => ({} as any)),
+    }).default({ enabled: true, consistent: true, seed: null }),
     warmup: z.object({
       enabled: z.boolean().default(false),
       duration: z.number().int().min(1).default(30),
       startFraction: z.number().min(0.01).max(1).default(0.1),
       emitEvent: z.boolean().default(true),
-    }).default(() => ({} as any)),
-  }).default(() => ({} as any)),
+    }).default({ enabled: false, duration: 30, startFraction: 0.1, emitEvent: true }),
+  }).default({ level: 'medium', delays: { enabled: true, actionDelay: { min: 300, max: 1800 }, messageDelay: { min: 800, max: 4000 }, paginationDelay: { min: 200, max: 900 } }, typingSimulation: { enabled: true, wpm: { min: 40, max: 80 }, naturalPauses: true }, rateLimit: { enabled: true, requestsPerMinute: 30, minInterval: 500, onOverload: 'queue' }, userAgent: { enabled: true, seed: null }, fingerprint: { enabled: true, consistent: true, seed: null }, warmup: { enabled: false, duration: 30, startFraction: 0.1, emitEvent: true } }),
 
   refresh: z.object({
     checkInterval: z.number().int().min(60000).default(300000),
@@ -93,13 +93,13 @@ export const configSchema = z.object({
     retries: z.number().int().min(0).default(3),
     failSilently: z.boolean().default(true),
     autoPersist: z.boolean().default(true),
-  }).default(() => ({} as any)),
+  }).default({ checkInterval: 300000, threshold: 1800000, retries: 3, failSilently: true, autoPersist: true }),
 
   keepalive: z.object({
     enabled: z.boolean().default(true),
     interval: z.number().int().min(60000).default(600000),
     onFailure: z.enum(['warn', 'throw', 'reconnect']).default('warn'),
-  }).default(() => ({} as any)),
+  }).default({ enabled: true, interval: 600000, onFailure: 'warn' }),
 
   proxy: z.object({
     url: z.string().nullable().default(null),

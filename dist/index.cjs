@@ -714,79 +714,79 @@ var configSchema = import_zod.z.object({
       connect: import_zod.z.number().int().min(100).default(5e3),
       request: import_zod.z.number().int().min(1e3).default(3e4),
       body: import_zod.z.number().int().min(1e3).default(6e4)
-    }).default(() => ({})),
+    }).default({ connect: 5e3, request: 3e4, body: 6e4 }),
     retries: import_zod.z.object({
       max: import_zod.z.number().int().min(0).max(20).default(5),
       baseDelay: import_zod.z.number().int().min(100).default(500)
-    }).default(() => ({}))
-  }).default(() => ({})),
+    }).default({ max: 5, baseDelay: 500 })
+  }).default({ maxConnections: 10, timeout: { connect: 5e3, request: 3e4, body: 6e4 }, retries: { max: 5, baseDelay: 500 } }),
   mqtt: import_zod.z.object({
     reconnect: import_zod.z.object({
       maxAttempts: import_zod.z.number().int().min(0).default(10),
       baseDelay: import_zod.z.number().int().min(100).default(1e3)
-    }).default(() => ({})),
+    }).default({ maxAttempts: 10, baseDelay: 1e3 }),
     heartbeat: import_zod.z.object({
       interval: import_zod.z.number().int().min(5e3).default(6e4)
-    }).default(() => ({}))
-  }).default(() => ({})),
+    }).default({ interval: 6e4 })
+  }).default({ reconnect: { maxAttempts: 10, baseDelay: 1e3 }, heartbeat: { interval: 6e4 } }),
   cache: import_zod.z.object({
     ttl: import_zod.z.number().int().min(0).default(3e5),
     maxSize: import_zod.z.number().int().min(1).default(500)
-  }).default(() => ({ ttl: 3e5, maxSize: 500 })),
+  }).default({ ttl: 3e5, maxSize: 500 }),
   session: import_zod.z.object({
     persistPath: import_zod.z.string().nullable().default(null),
     restoreOnStart: import_zod.z.boolean().default(true)
-  }).default(() => ({})),
+  }).default({ persistPath: null, restoreOnStart: true }),
   storage: import_zod.z.object({
     adapter: storageAdapterSchema.default("libsql")
-  }).default(() => ({})),
+  }).default({ adapter: "libsql" }),
   stealth: import_zod.z.object({
     level: stealthLevelSchema.default("medium"),
     delays: import_zod.z.object({
       enabled: import_zod.z.boolean().default(true),
-      actionDelay: import_zod.z.object({ min: import_zod.z.number().default(300), max: import_zod.z.number().default(1800) }).default(() => ({})),
-      messageDelay: import_zod.z.object({ min: import_zod.z.number().default(800), max: import_zod.z.number().default(4e3) }).default(() => ({})),
-      paginationDelay: import_zod.z.object({ min: import_zod.z.number().default(200), max: import_zod.z.number().default(900) }).default(() => ({}))
-    }).default(() => ({})),
+      actionDelay: import_zod.z.object({ min: import_zod.z.number().default(300), max: import_zod.z.number().default(1800) }).default({ min: 300, max: 1800 }),
+      messageDelay: import_zod.z.object({ min: import_zod.z.number().default(800), max: import_zod.z.number().default(4e3) }).default({ min: 800, max: 4e3 }),
+      paginationDelay: import_zod.z.object({ min: import_zod.z.number().default(200), max: import_zod.z.number().default(900) }).default({ min: 200, max: 900 })
+    }).default({ enabled: true, actionDelay: { min: 300, max: 1800 }, messageDelay: { min: 800, max: 4e3 }, paginationDelay: { min: 200, max: 900 } }),
     typingSimulation: import_zod.z.object({
       enabled: import_zod.z.boolean().default(true),
-      wpm: import_zod.z.object({ min: import_zod.z.number().default(40), max: import_zod.z.number().default(80) }).default(() => ({})),
+      wpm: import_zod.z.object({ min: import_zod.z.number().default(40), max: import_zod.z.number().default(80) }).default({ min: 40, max: 80 }),
       naturalPauses: import_zod.z.boolean().default(true)
-    }).default(() => ({})),
+    }).default({ enabled: true, wpm: { min: 40, max: 80 }, naturalPauses: true }),
     rateLimit: import_zod.z.object({
       enabled: import_zod.z.boolean().default(true),
       requestsPerMinute: import_zod.z.number().int().min(1).default(30),
       minInterval: import_zod.z.number().int().min(0).default(500),
       onOverload: import_zod.z.enum(["queue", "drop", "throw"]).default("queue")
-    }).default(() => ({})),
+    }).default({ enabled: true, requestsPerMinute: 30, minInterval: 500, onOverload: "queue" }),
     userAgent: import_zod.z.object({
       enabled: import_zod.z.boolean().default(true),
       seed: import_zod.z.string().nullable().default(null)
-    }).default(() => ({})),
+    }).default({ enabled: true, seed: null }),
     fingerprint: import_zod.z.object({
       enabled: import_zod.z.boolean().default(true),
       consistent: import_zod.z.boolean().default(true),
       seed: import_zod.z.string().nullable().default(null)
-    }).default(() => ({})),
+    }).default({ enabled: true, consistent: true, seed: null }),
     warmup: import_zod.z.object({
       enabled: import_zod.z.boolean().default(false),
       duration: import_zod.z.number().int().min(1).default(30),
       startFraction: import_zod.z.number().min(0.01).max(1).default(0.1),
       emitEvent: import_zod.z.boolean().default(true)
-    }).default(() => ({}))
-  }).default(() => ({})),
+    }).default({ enabled: false, duration: 30, startFraction: 0.1, emitEvent: true })
+  }).default({ level: "medium", delays: { enabled: true, actionDelay: { min: 300, max: 1800 }, messageDelay: { min: 800, max: 4e3 }, paginationDelay: { min: 200, max: 900 } }, typingSimulation: { enabled: true, wpm: { min: 40, max: 80 }, naturalPauses: true }, rateLimit: { enabled: true, requestsPerMinute: 30, minInterval: 500, onOverload: "queue" }, userAgent: { enabled: true, seed: null }, fingerprint: { enabled: true, consistent: true, seed: null }, warmup: { enabled: false, duration: 30, startFraction: 0.1, emitEvent: true } }),
   refresh: import_zod.z.object({
     checkInterval: import_zod.z.number().int().min(6e4).default(3e5),
     threshold: import_zod.z.number().int().min(6e4).default(18e5),
     retries: import_zod.z.number().int().min(0).default(3),
     failSilently: import_zod.z.boolean().default(true),
     autoPersist: import_zod.z.boolean().default(true)
-  }).default(() => ({})),
+  }).default({ checkInterval: 3e5, threshold: 18e5, retries: 3, failSilently: true, autoPersist: true }),
   keepalive: import_zod.z.object({
     enabled: import_zod.z.boolean().default(true),
     interval: import_zod.z.number().int().min(6e4).default(6e5),
     onFailure: import_zod.z.enum(["warn", "throw", "reconnect"]).default("warn")
-  }).default(() => ({})),
+  }).default({ enabled: true, interval: 6e5, onFailure: "warn" }),
   proxy: import_zod.z.object({
     url: import_zod.z.string().nullable().default(null),
     rotateEvery: import_zod.z.number().int().min(1).nullable().default(null),
@@ -1509,39 +1509,47 @@ async function humanDelay(config, type) {
 }
 var StealthManager = class {
   constructor(config, emitter, logger) {
-    this.config = config;
     this.emitter = emitter;
     this.logger = logger;
-    const seed = config.fingerprint.seed ?? config.userAgent.seed ?? randomHex(8);
-    this.fingerprint = config.fingerprint.enabled ? generateFingerprint(seed) : generateFingerprint();
-    if (config.fingerprint.enabled) {
+    this.normalizedConfig = {
+      level: config.level ?? "medium",
+      delays: config.delays ?? { enabled: true, actionDelay: { min: 300, max: 1800 }, messageDelay: { min: 800, max: 4e3 }, paginationDelay: { min: 200, max: 900 } },
+      typingSimulation: config.typingSimulation ?? { enabled: true, wpm: { min: 40, max: 80 }, naturalPauses: true },
+      rateLimit: config.rateLimit ?? { enabled: true, requestsPerMinute: 30, minInterval: 500, onOverload: "queue" },
+      userAgent: config.userAgent ?? { enabled: true, seed: null },
+      fingerprint: config.fingerprint ?? { enabled: true, consistent: true, seed: null },
+      warmup: config.warmup ?? { enabled: false, duration: 30, startFraction: 0.1, emitEvent: true }
+    };
+    const seed = this.normalizedConfig.fingerprint.seed || this.normalizedConfig.userAgent.seed || randomHex(8);
+    this.fingerprint = this.normalizedConfig.fingerprint.enabled ? generateFingerprint(seed) : generateFingerprint();
+    if (this.normalizedConfig.fingerprint.enabled) {
       emitter.emit("stealth:fingerprint:assigned", {
         userAgent: this.fingerprint.userAgent,
         platform: this.fingerprint.platform,
         locale: this.fingerprint.locale
       });
     }
-    if (config.warmup.enabled) {
+    if (this.normalizedConfig.warmup.enabled) {
       this.warmupStartTime = Date.now();
-      emitter.emit("stealth:warmup:start", { targetRateLimitRpm: config.rateLimit.requestsPerMinute });
-      logger.info("Stealth warm-up started", { tag: "STEALTH", duration: config.warmup.duration });
+      emitter.emit("stealth:warmup:start", { targetRateLimitRpm: this.normalizedConfig.rateLimit.requestsPerMinute });
+      logger.info("Stealth warm-up started", { tag: "STEALTH", duration: this.normalizedConfig.warmup.duration });
     }
   }
-  config;
   emitter;
   logger;
   fingerprint;
   requestCount = 0;
   warmupStartTime = null;
+  normalizedConfig;
   getHeaders(referer) {
-    const level = this.config.level;
+    const level = this.normalizedConfig.level;
     if (level === "off") return {};
     return buildStealthHeaders(this.fingerprint, referer);
   }
   isWarmupComplete() {
-    if (!this.config.warmup.enabled || this.warmupStartTime === null) return true;
+    if (!this.normalizedConfig.warmup.enabled || this.warmupStartTime === null) return true;
     const elapsed = Date.now() - this.warmupStartTime;
-    const durationMs = this.config.warmup.duration * 60 * 1e3;
+    const durationMs = this.normalizedConfig.warmup.duration * 60 * 1e3;
     if (elapsed >= durationMs) {
       this.emitter.emit("stealth:warmup:complete", { durationMs: elapsed });
       this.warmupStartTime = null;
@@ -1550,14 +1558,14 @@ var StealthManager = class {
     return false;
   }
   getCurrentRateLimit() {
-    if (!this.config.warmup.enabled || this.isWarmupComplete()) {
-      return this.config.rateLimit.requestsPerMinute;
+    if (!this.normalizedConfig.warmup.enabled || this.isWarmupComplete()) {
+      return this.normalizedConfig.rateLimit.requestsPerMinute;
     }
     const elapsed = Date.now() - (this.warmupStartTime ?? Date.now());
-    const durationMs = this.config.warmup.duration * 60 * 1e3;
+    const durationMs = this.normalizedConfig.warmup.duration * 60 * 1e3;
     const progress = Math.min(elapsed / durationMs, 1);
-    const fraction = this.config.warmup.startFraction + (1 - this.config.warmup.startFraction) * progress;
-    return Math.max(1, Math.round(this.config.rateLimit.requestsPerMinute * fraction));
+    const fraction = this.normalizedConfig.warmup.startFraction + (1 - this.normalizedConfig.warmup.startFraction) * progress;
+    return Math.max(1, Math.round(this.normalizedConfig.rateLimit.requestsPerMinute * fraction));
   }
   incrementRequestCount() {
     this.requestCount++;

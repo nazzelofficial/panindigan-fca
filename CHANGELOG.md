@@ -7,6 +7,57 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.3] - 2026-07-10
+
+### Fixed
+
+#### StealthManager initialization crash — `TypeError: Cannot read properties of undefined (reading 'seed')`
+- Root cause: the Zod v4 config schema's nested `.default(() => ({} as any))` did not backfill inner object defaults for `stealth.userAgent`, `stealth.fingerprint`, `stealth.warmup`, `stealth.rateLimit`, `stealth.delays`, and `stealth.typingSimulation`. When no stealth overrides were supplied, these nested objects could resolve to `{}` or `undefined`, causing `StealthManager` constructor to throw when accessing `config.fingerprint.seed` and `config.userAgent.seed`. This crash occurred immediately after AppState loaded successfully, before Facebook authentication began, on every login path (AppState array, `APPSTATE` env var, `appstate.json`, email/password, proxy).
+- Fixed the config schema so all nested stealth objects always resolve with valid defaults even when no overrides are supplied:
+  - `userAgent`: `{ enabled: true, seed: null }`
+  - `fingerprint`: `{ enabled: true, consistent: true, seed: null }`
+  - `warmup`: `{ enabled: false, duration: 30, startFraction: 0.1, emitEvent: true }`
+  - `rateLimit`: `{ enabled: true, requestsPerMinute: 30, minInterval: 500, onOverload: 'queue' }`
+  - `delays`: `{ enabled: true, actionDelay: { min: 300, max: 1800 }, messageDelay: { min: 800, max: 4000 }, paginationDelay: { min: 200, max: 900 } }`
+  - `typingSimulation`: `{ enabled: true, wpm: { min: 40, max: 80 }, naturalPauses: true }`
+- Hardened `StealthManager` itself with defense-in-depth normalization: the constructor now stores a `normalizedConfig` private field that merges user-provided config with production defaults using nullish coalescing (`??`). All property access goes through this normalized config, so the crash cannot recur even if a future caller passes malformed config directly.
+  - Missing or undefined nested objects (`fingerprint`, `userAgent`, `warmup`, `rateLimit`, `delays`, `typingSimulation`) are replaced with full default objects.
+  - Seed generation: if both `fingerprint.seed` and `userAgent.seed` are null/undefined/empty, a cryptographically secure random seed is generated via `randomHex(8)`.
+  - All methods (`getHeaders`, `isWarmupComplete`, `getCurrentRateLimit`) now read from `normalizedConfig` instead of the raw input.
+- Fixed the same unsafe `.default(() => ({} as any))` pattern across the entire config schema:
+  - `http.timeout`, `http.retries`, `http` top-level
+  - `mqtt.reconnect`, `mqtt.heartbeat`, `mqtt` top-level
+  - `cache` top-level
+  - `session` top-level
+  - `storage` top-level
+  - `refresh` top-level
+  - `keepalive` top-level
+  All now use explicit object literals with full defaults instead of empty-object functions.
+- `StealthManager` now accepts zero-argument construction (`new StealthManager(undefined, emitter, logger)`) for full backward compatibility with existing `createClient(...)` call sites that don't provide stealth configuration.
+- Added comprehensive unit tests for `StealthManager` covering:
+  - Construction with no stealth configuration
+  - Construction with partial stealth configuration (missing nested objects)
+  - Seed handling (null, undefined, empty string, auto-generation, fallback to `userAgent.seed`)
+  - Warmup configuration (enabled/disabled, missing object)
+  - `getHeaders`, `isWarmupComplete`, `getCurrentRateLimit` methods
+  - Full stealth configuration with all options
+  - `generateFingerprint` and `buildStealthHeaders` utilities
+- Added regression test suite for constructor normalization covering:
+  - `loadConfig()` with no overrides (verifies all nested objects are initialized)
+  - `StealthManager` with empty/partial/missing nested config
+  - `CacheManager` with no/empty/partial/invalid options
+  - `ProxyManager` with various proxy URL formats
+  - `loadConfig()` with partial overrides (verifies nested defaults are preserved)
+  - Config schema validation with null/undefined/empty overrides
+
+### Changed
+
+#### Config schema defaults
+- Replaced all `.default(() => ({} as any))` patterns with explicit object literals containing full default values. This ensures Zod v4's default resolution always produces complete, valid nested objects instead of empty objects that cause undefined property access crashes downstream.
+- Affected sections: `http`, `mqtt`, `cache`, `session`, `storage`, `stealth`, `refresh`, `keepalive`.
+
+---
+
 ## [0.1.2] - 2026-07-10
 
 ### Fixed
@@ -302,5 +353,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-[Unreleased]: https://github.com/nazzelofficial/panindigan-fca/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nazzelofficial/panindigan-fca/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/nazzelofficial/panindigan-fca/releases/tag/v0.1.3
+[0.1.2]: https://github.com/nazzelofficial/panindigan-fca/releases/tag/v0.1.2
+[0.1.1]: https://github.com/nazzelofficial/panindigan-fca/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nazzelofficial/panindigan-fca/releases/tag/v0.1.0
