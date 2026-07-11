@@ -53,9 +53,13 @@ interface RawCookieInput {
  * Extended in v0.1.8 to carry all fields from {@link RawCookieInput} so that
  * round-tripping through `normalizeCookies → validateAppState → hydrateJar →
  * exportJar` preserves the original metadata.
+ *
+ * Extended in v0.1.9 to include both `key` and `name` fields for maximum
+ * compatibility with legacy and modern FCA implementations.
  */
 interface AppStateCookie {
     key: string;
+    name: string;
     value: string;
     domain: string;
     path: string;
@@ -1070,9 +1074,10 @@ declare class AuthManager {
     private refreshTimer;
     private keepaliveTimer;
     private _refreshFailCount;
+    private skipPreflightChecks;
     constructor(jar: CookieJar, http: HttpClient, emitter: TypedEventEmitter, storage: StorageAdapter, config: Config, logger: Logger);
     get tokens(): SessionTokens;
-    bootstrap(): Promise<SessionTokens>;
+    bootstrap(skipPreflight?: boolean): Promise<SessionTokens>;
     loginWithCredentials(email: string, password: string, twoFactorCode?: string): Promise<void>;
     private submitTwoFactor;
     private calcJazoest;
@@ -1082,6 +1087,8 @@ declare class AuthManager {
     private checkForLoginApproval;
     private checkForExpiredSession;
     private determineTokenExtractionFailure;
+    private performPreflightChecks;
+    private buildCookieDiagnostics;
     refreshCookies(): Promise<void>;
     keepalive(): Promise<void>;
     getAppState(): Promise<AppStateCookie[]>;

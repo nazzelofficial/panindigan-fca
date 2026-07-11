@@ -7,6 +7,49 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.9] - 2026-07-11
+
+### 🚀 Added
+- Introduced a production-grade AppState compatibility layer supporting multiple Facebook cookie export formats.
+- Added automatic AppState normalization for legacy, modern, mixed, browser-exported, and environment-based AppState sources.
+- Added comprehensive AppState diagnostics with safe logging that never exposes sensitive cookie values.
+- Added automatic duplicate cookie resolution during normalization.
+- Added Facebook domain normalization supporting facebook.com, .facebook.com, www.facebook.com, and m.facebook.com.
+- Added extensive unit tests covering normalization, validation, hydration, export, persistence, and backward compatibility.
+
+### ✨ Improved
+- Reworked the entire AppState authentication pipeline for improved reliability and long-term compatibility.
+- Improved cookie hydration to preserve all supported cookie attributes, including domain, path, expiry, security flags, SameSite policy, and session state.
+- Improved CookieJar export to maximize interoperability with legacy FCA implementations, browser cookie exporters, and future releases.
+- Improved AppState validation with clearer diagnostics and actionable error messages.
+- Improved authentication bootstrap with pre-flight integrity verification before contacting Facebook.
+- Improved internal cookie processing performance using single-pass O(n) normalization and validation.
+- Improved AppState loading consistency across environment variables, JSON files, databases, and storage providers.
+- Improved startup logging to provide better authentication diagnostics without leaking sensitive information.
+
+### 🛠 Fixed
+- Fixed login failures caused by AppState exports using key instead of name.
+- Fixed authentication failures caused by mixed AppState formats.
+- Fixed invalid cookie hydration resulting in undefined=value cookies being inserted into CookieJar.
+- Fixed duplicate cookie handling across multiple AppState sources.
+- Fixed inconsistent handling of Facebook domain variants.
+- Fixed cookie serialization inconsistencies during AppState export.
+- Fixed various edge cases involving session cookies, expiration formats, and browser-exported AppState files.
+- Fixed authentication failures caused by malformed or partially compatible AppState objects.
+
+### 🔒 Security
+- Authentication diagnostics never expose cookie values, access tokens, or AppState contents.
+- Validation now rejects malformed AppState objects before any network request is performed.
+- Required authentication cookies are verified before initiating Facebook login.
+
+### ♻️ Internal
+- Centralized all AppState normalization, validation, hydration, and export logic into a unified cookie pipeline.
+- Removed duplicated cookie processing throughout the authentication stack.
+- Refactored authentication internals for improved maintainability, stricter TypeScript safety, and cleaner architecture.
+- Improved test coverage with 220 passing unit tests and complete coverage for cookie-related modules.
+- Applied SOLID design principles and removed temporary compatibility workarounds.
+
+---
 
 ## [0.1.8] - 2026-07-11
 

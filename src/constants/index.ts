@@ -29,6 +29,8 @@ export const FB_CLIENT_REVISION = 1;
 
 export const REQUIRED_COOKIES = ['c_user', 'xs', 'datr'] as const;
 
+export const RECOMMENDED_COOKIES = ['fr', 'sb', 'wd', 'presence'] as const;
+
 export const SENSITIVE_FIELDS = [
   'password',
   'secret',

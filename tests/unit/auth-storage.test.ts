@@ -76,11 +76,16 @@ describe('auth and storage coverage', () => {
 
   it('exercises auth manager checkpoints, suspension, and refresh paths', async () => {
     const jar = new CookieJar();
+    // Add required cookies to pass pre-flight checks
+    jar.setCookieSync('c_user=1234567890', 'https://facebook.com');
+    jar.setCookieSync('xs=test-xs-token', 'https://facebook.com');
+    jar.setCookieSync('datr=test-datr-token', 'https://facebook.com');
+    
     const http = {
       get: vi.fn()
         .mockResolvedValueOnce({ text: async () => '<html>account has been suspended</html>' })
         .mockResolvedValueOnce({ text: async () => '<html>/checkpoint/</html>' })
-        .mockResolvedValueOnce({ text: async () => '<html>"DTSGInitialData", [], {"token":"abc"}</html>' }),
+        .mockResolvedValueOnce({ text: async () => '<html>"DTSGInitialData", [], {"token":"abc"} "LSD", [], {"token":"def"}</html>' }),
       post: vi.fn(async () => ({ text: async () => '<html>login_error</html>' })),
     };
     const emitter = { emit: vi.fn() };

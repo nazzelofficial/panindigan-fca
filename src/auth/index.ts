@@ -32,10 +32,11 @@ import {
   FB_LOGOUT_URL,
   CHECKPOINT_PATHS,
   SUSPENSION_INDICATORS,
-  RESTRICTION_INDICATORS,
   RATE_LIMIT_INDICATORS,
   LOGIN_APPROVAL_INDICATORS,
   EXPIRED_SESSION_INDICATORS,
+  REQUIRED_COOKIES,
+  RECOMMENDED_COOKIES,
 } from '../constants/index.js';
 
 export interface SessionTokens {
@@ -49,6 +50,7 @@ export class AuthManager {
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private _refreshFailCount = 0;
+  private skipPreflightChecks = false;
 
   constructor(
     private readonly jar: CookieJar,
@@ -64,8 +66,14 @@ export class AuthManager {
     return this._tokens;
   }
 
-  async bootstrap(): Promise<SessionTokens> {
+  async bootstrap(skipPreflight: boolean = false): Promise<SessionTokens> {
     this.logger.info('Bootstrapping Facebook session', { tag: 'AUTH' });
+    
+    // Pre-flight checks before contacting Facebook (only for AppState-based auth)
+    if (!skipPreflight) {
+      this.performPreflightChecks();
+    }
+    
     const resp = await this.http.get(`${FB_BASE_URL}/`, { skipRetry: false });
     const html = await resp.text();
 
@@ -129,7 +137,8 @@ export class AuthManager {
     }
 
     this.checkForCheckpoint(html);
-    await this.bootstrap();
+    // Skip pre-flight checks for credential-based auth (cookies will be set during login)
+    await this.bootstrap(true);
   }
 
   private async submitTwoFactor(code: string, previousHtml: string): Promise<void> {
@@ -239,6 +248,128 @@ export class AuthManager {
 
     // Generic fallback
     return 'AppState may be expired or Facebook HTML structure has changed';
+  }
+
+  private performPreflightChecks(): void {
+    const jarJson = this.jar.toJSON() as Record<string, unknown> | undefined;
+    const cookies = (jarJson?.['cookies'] as Array<Record<string, unknown>>) ?? [];
+    
+    // Check cookie count
+    if (cookies.length === 0) {
+      throw new InvalidAppStateError(
+        'Authentication bootstrap failed: CookieJar is empty. No cookies loaded.',
+        { cookieCount: 0 },
+      );
+    }
+
+    // Build cookie key set for lookups
+    const keySet = new Set<string>();
+    const domainMap = new Map<string, Set<string>>();
+    
+    for (const c of cookies) {
+      const key = String(c['key'] ?? '');
+      const domain = String(c['domain'] ?? '');
+      
+      if (key) {
+        keySet.add(key);
+        if (!domainMap.has(domain)) {
+          domainMap.set(domain, new Set());
+        }
+        domainMap.get(domain)!.add(key);
+      }
+    }
+
+    // Check required cookies
+    const missingRequired: string[] = [];
+    for (const required of REQUIRED_COOKIES) {
+      if (!keySet.has(required)) {
+        missingRequired.push(required);
+      }
+    }
+
+    if (missingRequired.length > 0) {
+      const diagnostics = this.buildCookieDiagnostics(cookies, keySet, domainMap);
+      throw new InvalidAppStateError(
+        `Authentication bootstrap failed. Required Facebook cookies are missing.\n\nMissing: ${missingRequired.join(', ')}\n\nAuthentication was aborted before contacting Facebook.`,
+        { 
+          missingCookies: missingRequired,
+          cookieCount: cookies.length,
+          presentCookies: [...keySet],
+          diagnostics,
+        },
+      );
+    }
+
+    // Check for duplicate cookies
+    const duplicates: string[] = [];
+    for (const [domain, keys] of domainMap.entries()) {
+      for (const key of keys) {
+        const count = cookies.filter(c => String(c['key']) === key && String(c['domain']) === domain).length;
+        if (count > 1) {
+          duplicates.push(`${key}@${domain}`);
+        }
+      }
+    }
+
+    if (duplicates.length > 0) {
+      this.logger.warn('Duplicate cookies detected', {
+        tag: 'AUTH',
+        duplicates,
+        count: duplicates.length,
+      });
+    }
+
+    // Check for invalid domains
+    const validDomains = new Set(['facebook.com', '.facebook.com', 'm.facebook.com', '.m.facebook.com', 'www.facebook.com', '.www.facebook.com']);
+    const invalidDomains: string[] = [];
+    for (const domain of domainMap.keys()) {
+      const normalized = domain.startsWith('.') ? domain.slice(1) : domain;
+      if (!validDomains.has(domain) && !validDomains.has(normalized)) {
+        invalidDomains.push(domain);
+      }
+    }
+
+    if (invalidDomains.length > 0) {
+      this.logger.warn('Cookies with invalid domains detected', {
+        tag: 'AUTH',
+        invalidDomains,
+        count: invalidDomains.length,
+      });
+    }
+
+    // Log successful pre-flight check
+    this.logger.info('Pre-flight checks passed', {
+      tag: 'AUTH',
+      cookieCount: cookies.length,
+      requiredCookies: REQUIRED_COOKIES.map(c => ({ cookie: c, present: keySet.has(c) })),
+      recommendedCookies: RECOMMENDED_COOKIES.map(c => ({ cookie: c, present: keySet.has(c) })),
+      duplicateCount: duplicates.length,
+      invalidDomainCount: invalidDomains.length,
+    });
+  }
+
+  private buildCookieDiagnostics(
+    cookies: Array<Record<string, unknown>>,
+    keySet: Set<string>,
+    domainMap: Map<string, Set<string>>,
+  ): string {
+    const lines: string[] = [];
+    
+    lines.push(`Loaded cookies: ${cookies.length}`);
+    lines.push('');
+    lines.push('Required:');
+    for (const required of REQUIRED_COOKIES) {
+      lines.push(`${keySet.has(required) ? '✓' : '✗'} ${required}`);
+    }
+    lines.push('');
+    lines.push('Recommended:');
+    for (const recommended of RECOMMENDED_COOKIES) {
+      lines.push(`${keySet.has(recommended) ? '✓' : '✗'} ${recommended}`);
+    }
+    lines.push('');
+    lines.push(`Domains: ${[...domainMap.keys()].join(', ')}`);
+    
+    return lines.join('\n');
   }
 
   async refreshCookies(): Promise<void> {

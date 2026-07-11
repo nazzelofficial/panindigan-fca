@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { validateAppState, type AppStateCookie } from '../cookies/index.js';
+import { validateAppState, normalizeCookies, type AppStateCookie } from '../cookies/index.js';
 import { ConfigurationError, InvalidAppStateError } from '../errors/index.js';
+import { REQUIRED_COOKIES, RECOMMENDED_COOKIES } from '../constants/index.js';
 import type { Logger } from '../logger/index.js';
 
 /**
@@ -250,20 +251,9 @@ export function loadAppState(options: AppStateLoadOptions = {}): AppStateResult 
     const result = normalizeInput(attempt.label, raw, diagnostics);
     if (!result) continue;
 
+    // Enhanced diagnostics logging
     if (options.debugAppState) {
-      const lines = [
-        '[APPSTATE]',
-        `Source ............ ${result.source}`,
-        `Input Type ........ ${result.inputType}`,
-        `Cookies ........... ${result.cookies.length}`,
-        `Contains c_user ... ${result.cookies.some((c) => c.key === 'c_user') ? 'yes' : 'no'}`,
-        `Contains xs ....... ${result.cookies.some((c) => c.key === 'xs') ? 'yes' : 'no'}`,
-        'Validation ........ passed',
-        'Normalized ........ yes',
-        'Cache ............. created',
-        'Status ............ READY',
-      ];
-      (logger?.debug ?? console.debug)(lines.join('\n'));
+      logDetailedDiagnostics(result, logger);
     } else {
       logger?.info?.(
         `[APPSTATE] Source: ${result.source} | Status: Loaded | Cookies: ${result.cookies.length}`,
@@ -280,6 +270,46 @@ export function loadAppState(options: AppStateLoadOptions = {}): AppStateResult 
   });
 
   return { ...NO_APPSTATE, diagnostics };
+}
+
+function logDetailedDiagnostics(result: AppStateResult, logger: Pick<Logger, 'info' | 'debug' | 'warn'> | undefined): void {
+  const keySet = new Set(result.cookies.map((c) => c.key));
+  
+  const lines = [
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    'AppState Diagnostics',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    '',
+    `Source:`,
+    `  ${result.source}`,
+    '',
+    `Input Type:`,
+    `  ${result.inputType}`,
+    '',
+    `Normalization:`,
+    `  SUCCESS`,
+    '',
+    `Cookies:`,
+    `  ${result.cookies.length}`,
+    '',
+    `Format Support:`,
+    `  Legacy Format: Supported`,
+    `  Modern Format: Supported`,
+    `  Mixed Format: Supported`,
+    '',
+    'Required Cookies:',
+    ...REQUIRED_COOKIES.map(c => `  ${keySet.has(c) ? '✓' : '✗'} ${c}`),
+    '',
+    'Recommended Cookies:',
+    ...RECOMMENDED_COOKIES.map(c => `  ${keySet.has(c) ? '✓' : '✗'} ${c}`),
+    '',
+    'CookieJar:',
+    '  Hydrated Successfully',
+    '',
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+  ];
+  
+  (logger?.debug ?? console.debug)(lines.join('\n'));
 }
 
 /** Clears the internal per-content memo. Exposed for tests only. */

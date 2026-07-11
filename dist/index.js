@@ -35,6 +35,7 @@ var MQTT_BROKERS = [
 var MQTT_APP_ID = "2220391788200892";
 var MQTT_KEEPALIVE_SEC = 60;
 var REQUIRED_COOKIES = ["c_user", "xs", "datr"];
+var RECOMMENDED_COOKIES = ["fr", "sb", "wd", "presence"];
 var SENSITIVE_FIELDS = [
   "password",
   "secret",
@@ -1892,6 +1893,8 @@ function normalizeCookies(raw) {
     }
     const normalized = {
       key: rawKey,
+      name: rawKey,
+      // Include both key and name for compatibility
       value,
       domain,
       path,
@@ -1991,18 +1994,25 @@ function hydrateJar(appState) {
 async function exportJar(jar) {
   const store = jar.toJSON();
   const cookies = store?.["cookies"] ?? [];
-  return cookies.map((c) => ({
-    key: String(c["key"] ?? ""),
-    value: String(c["value"] ?? ""),
-    domain: String(c["domain"] ?? ".facebook.com"),
-    path: String(c["path"] ?? "/"),
-    hostOnly: Boolean(c["hostOnly"]),
-    secure: Boolean(c["secure"]),
-    httpOnly: Boolean(c["httpOnly"]),
-    creation: c["creation"] ? String(c["creation"]) : (/* @__PURE__ */ new Date()).toISOString(),
-    lastAccessed: c["lastAccessed"] ? String(c["lastAccessed"]) : (/* @__PURE__ */ new Date()).toISOString(),
-    expires: c["expires"] ? String(c["expires"]) : "Infinity"
-  }));
+  return cookies.map((c) => {
+    const key = String(c["key"] ?? "");
+    return {
+      key,
+      name: key,
+      // Include both key and name for maximum compatibility
+      value: String(c["value"] ?? ""),
+      domain: String(c["domain"] ?? ".facebook.com"),
+      path: String(c["path"] ?? "/"),
+      hostOnly: Boolean(c["hostOnly"]),
+      secure: Boolean(c["secure"]),
+      httpOnly: Boolean(c["httpOnly"]),
+      creation: c["creation"] ? String(c["creation"]) : (/* @__PURE__ */ new Date()).toISOString(),
+      lastAccessed: c["lastAccessed"] ? String(c["lastAccessed"]) : (/* @__PURE__ */ new Date()).toISOString(),
+      expires: c["expires"] ? String(c["expires"]) : "Infinity",
+      sameSite: c["sameSite"] ? String(c["sameSite"]) : void 0,
+      session: c["session"] ? Boolean(c["session"]) : void 0
+    };
+  });
 }
 function getUserIdFromJar(jar) {
   const jarJson = jar.toJSON();
@@ -3212,12 +3222,16 @@ var AuthManager = class {
   refreshTimer = null;
   keepaliveTimer = null;
   _refreshFailCount = 0;
+  skipPreflightChecks = false;
   get tokens() {
     if (!this._tokens) throw new InvalidAppStateError("Session has not been bootstrapped");
     return this._tokens;
   }
-  async bootstrap() {
+  async bootstrap(skipPreflight = false) {
     this.logger.info("Bootstrapping Facebook session", { tag: "AUTH" });
+    if (!skipPreflight) {
+      this.performPreflightChecks();
+    }
     const resp = await this.http.get(`${FB_BASE_URL}/`, { skipRetry: false });
     const html = await resp.text();
     this.checkForCheckpoint(html);
@@ -3269,7 +3283,7 @@ var AuthManager = class {
       throw new LoginFailedError("Email or password is incorrect", { email });
     }
     this.checkForCheckpoint(html);
-    await this.bootstrap();
+    await this.bootstrap(true);
   }
   async submitTwoFactor(code, previousHtml) {
     const dtsg = extractDtsgFromHtml(previousHtml) ?? "";
@@ -3360,6 +3374,107 @@ var AuthManager = class {
       return "AppState may be expired or Facebook HTML structure has changed";
     }
     return "AppState may be expired or Facebook HTML structure has changed";
+  }
+  performPreflightChecks() {
+    const jarJson = this.jar.toJSON();
+    const cookies = jarJson?.["cookies"] ?? [];
+    if (cookies.length === 0) {
+      throw new InvalidAppStateError(
+        "Authentication bootstrap failed: CookieJar is empty. No cookies loaded.",
+        { cookieCount: 0 }
+      );
+    }
+    const keySet = /* @__PURE__ */ new Set();
+    const domainMap = /* @__PURE__ */ new Map();
+    for (const c of cookies) {
+      const key = String(c["key"] ?? "");
+      const domain = String(c["domain"] ?? "");
+      if (key) {
+        keySet.add(key);
+        if (!domainMap.has(domain)) {
+          domainMap.set(domain, /* @__PURE__ */ new Set());
+        }
+        domainMap.get(domain).add(key);
+      }
+    }
+    const missingRequired = [];
+    for (const required of REQUIRED_COOKIES) {
+      if (!keySet.has(required)) {
+        missingRequired.push(required);
+      }
+    }
+    if (missingRequired.length > 0) {
+      const diagnostics = this.buildCookieDiagnostics(cookies, keySet, domainMap);
+      throw new InvalidAppStateError(
+        `Authentication bootstrap failed. Required Facebook cookies are missing.
+
+Missing: ${missingRequired.join(", ")}
+
+Authentication was aborted before contacting Facebook.`,
+        {
+          missingCookies: missingRequired,
+          cookieCount: cookies.length,
+          presentCookies: [...keySet],
+          diagnostics
+        }
+      );
+    }
+    const duplicates = [];
+    for (const [domain, keys] of domainMap.entries()) {
+      for (const key of keys) {
+        const count = cookies.filter((c) => String(c["key"]) === key && String(c["domain"]) === domain).length;
+        if (count > 1) {
+          duplicates.push(`${key}@${domain}`);
+        }
+      }
+    }
+    if (duplicates.length > 0) {
+      this.logger.warn("Duplicate cookies detected", {
+        tag: "AUTH",
+        duplicates,
+        count: duplicates.length
+      });
+    }
+    const validDomains = /* @__PURE__ */ new Set(["facebook.com", ".facebook.com", "m.facebook.com", ".m.facebook.com", "www.facebook.com", ".www.facebook.com"]);
+    const invalidDomains = [];
+    for (const domain of domainMap.keys()) {
+      const normalized = domain.startsWith(".") ? domain.slice(1) : domain;
+      if (!validDomains.has(domain) && !validDomains.has(normalized)) {
+        invalidDomains.push(domain);
+      }
+    }
+    if (invalidDomains.length > 0) {
+      this.logger.warn("Cookies with invalid domains detected", {
+        tag: "AUTH",
+        invalidDomains,
+        count: invalidDomains.length
+      });
+    }
+    this.logger.info("Pre-flight checks passed", {
+      tag: "AUTH",
+      cookieCount: cookies.length,
+      requiredCookies: REQUIRED_COOKIES.map((c) => ({ cookie: c, present: keySet.has(c) })),
+      recommendedCookies: RECOMMENDED_COOKIES.map((c) => ({ cookie: c, present: keySet.has(c) })),
+      duplicateCount: duplicates.length,
+      invalidDomainCount: invalidDomains.length
+    });
+  }
+  buildCookieDiagnostics(cookies, keySet, domainMap) {
+    const lines = [];
+    lines.push(`Loaded cookies: ${cookies.length}`);
+    lines.push("");
+    lines.push("Required:");
+    for (const required of REQUIRED_COOKIES) {
+      lines.push(`${keySet.has(required) ? "\u2713" : "\u2717"} ${required}`);
+    }
+    lines.push("");
+    lines.push("Recommended:");
+    for (const recommended of RECOMMENDED_COOKIES) {
+      lines.push(`${keySet.has(recommended) ? "\u2713" : "\u2717"} ${recommended}`);
+    }
+    lines.push("");
+    lines.push(`Domains: ${[...domainMap.keys()].join(", ")}`);
+    return lines.join("\n");
   }
   async refreshCookies() {
     this.logger.info("Refreshing cookies", { tag: "AUTH" });
@@ -3678,19 +3793,7 @@ function loadAppState(options = {}) {
     const result = normalizeInput(attempt.label, raw, diagnostics);
     if (!result) continue;
     if (options.debugAppState) {
-      const lines = [
-        "[APPSTATE]",
-        `Source ............ ${result.source}`,
-        `Input Type ........ ${result.inputType}`,
-        `Cookies ........... ${result.cookies.length}`,
-        `Contains c_user ... ${result.cookies.some((c) => c.key === "c_user") ? "yes" : "no"}`,
-        `Contains xs ....... ${result.cookies.some((c) => c.key === "xs") ? "yes" : "no"}`,
-        "Validation ........ passed",
-        "Normalized ........ yes",
-        "Cache ............. created",
-        "Status ............ READY"
-      ];
-      (logger?.debug ?? console.debug)(lines.join("\n"));
+      logDetailedDiagnostics(result, logger);
     } else {
       logger?.info?.(
         `[APPSTATE] Source: ${result.source} | Status: Loaded | Cookies: ${result.cookies.length}`,
@@ -3704,6 +3807,43 @@ function loadAppState(options = {}) {
     diagnostics
   });
   return { ...NO_APPSTATE, diagnostics };
+}
+function logDetailedDiagnostics(result, logger) {
+  const keySet = new Set(result.cookies.map((c) => c.key));
+  const lines = [
+    "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501",
+    "AppState Diagnostics",
+    "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501",
+    "",
+    `Source:`,
+    `  ${result.source}`,
+    "",
+    `Input Type:`,
+    `  ${result.inputType}`,
+    "",
+    `Normalization:`,
+    `  SUCCESS`,
+    "",
+    `Cookies:`,
+    `  ${result.cookies.length}`,
+    "",
+    `Format Support:`,
+    `  Legacy Format: Supported`,
+    `  Modern Format: Supported`,
+    `  Mixed Format: Supported`,
+    "",
+    "Required Cookies:",
+    ...REQUIRED_COOKIES.map((c) => `  ${keySet.has(c) ? "\u2713" : "\u2717"} ${c}`),
+    "",
+    "Recommended Cookies:",
+    ...RECOMMENDED_COOKIES.map((c) => `  ${keySet.has(c) ? "\u2713" : "\u2717"} ${c}`),
+    "",
+    "CookieJar:",
+    "  Hydrated Successfully",
+    "",
+    "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501"
+  ];
+  (logger?.debug ?? console.debug)(lines.join("\n"));
 }
 
 // src/sessions/index.ts

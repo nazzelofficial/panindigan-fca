@@ -127,13 +127,13 @@ describe('core utility modules', () => {
 
   it('validates and hydrates app state cookies', async () => {
     const appState = [
-      { key: 'c_user', value: '1', domain: '.facebook.com', path: '/' },
-      { key: 'xs', value: 'x', domain: '.facebook.com', path: '/' },
-      { key: 'datr', value: 'd', domain: '.facebook.com', path: '/' },
+      { key: 'c_user', name: 'c_user', value: '1', domain: '.facebook.com', path: '/' },
+      { key: 'xs', name: 'xs', value: 'x', domain: '.facebook.com', path: '/' },
+      { key: 'datr', name: 'datr', value: 'd', domain: '.facebook.com', path: '/' },
     ];
     expect(validateAppState(appState)).toHaveLength(3);
 
-    const invalid = [{ key: 'c_user', value: '1', domain: '.facebook.com', path: '/' }];
+    const invalid = [{ key: 'c_user', name: 'c_user', value: '1', domain: '.facebook.com', path: '/' }];
     expect(() => validateAppState(invalid)).toThrow(InvalidAppStateError);
 
     const jar = hydrateJar(appState);
@@ -152,15 +152,15 @@ describe('core utility modules', () => {
 
     // Test hydrateJar expires branches (lines 58-61)
     const appStateWithExpires = [
-      { key: 'c_user', value: '1', domain: '.facebook.com', path: '/', expires: 'Infinity' },
-      { key: 'xs', value: 'x', domain: '.facebook.com', path: '/', expires: 1234567890 },
-      { key: 'datr', value: 'd', domain: '.facebook.com', path: '/', expires: '2024-01-01' },
+      { key: 'c_user', name: 'c_user', value: '1', domain: '.facebook.com', path: '/', expires: 'Infinity' },
+      { key: 'xs', name: 'xs', value: 'x', domain: '.facebook.com', path: '/', expires: 1234567890 },
+      { key: 'datr', name: 'datr', value: 'd', domain: '.facebook.com', path: '/', expires: '2024-01-01' },
     ];
     const jarWithExpires = hydrateJar(appStateWithExpires);
     expect(getUserIdFromJar(jarWithExpires)).toBe('1');
 
     // Test getUserIdFromJar error (line 112)
-    const emptyJar = hydrateJar([{ key: 'other', value: 'v', domain: '.facebook.com', path: '/' }]);
+    const emptyJar = hydrateJar([{ key: 'other', name: 'other', value: 'v', domain: '.facebook.com', path: '/' }]);
     expect(() => getUserIdFromJar(emptyJar)).toThrow(InvalidAppStateError);
   });
 
@@ -469,6 +469,11 @@ describe('core utility modules', () => {
     expect(isMessageSendEndpoint('https://www.facebook.com/messaging/send/123')).toBe(true);
 
     const jar = new CookieJar();
+    // Add required cookies to pass pre-flight checks
+    jar.setCookieSync('c_user=1234567890', 'https://facebook.com');
+    jar.setCookieSync('xs=test-xs-token', 'https://facebook.com');
+    jar.setCookieSync('datr=test-datr-token', 'https://facebook.com');
+    
     const http = {
       get: vi.fn(async () => ({ text: async () => '<html><body></body></html>' })),
       post: vi.fn(async () => ({ text: async () => '<html><body></body></html>' })),

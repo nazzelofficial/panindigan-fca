@@ -123,7 +123,7 @@ await createClient({});
 
 ### Cookie Normalization
 
-v0.1.8 introduces `normalizeCookies()` — a full normalization pipeline that accepts all known exporter formats before validation:
+v0.1.9 introduces a **production-grade cookie normalization pipeline** that accepts all known AppState exporter formats with maximum compatibility:
 
 ```typescript
 import { normalizeCookies, validateAppState } from 'panindigan-fca';
@@ -135,8 +135,22 @@ const rawFromChrome = [
   { name: 'datr',   value: 'xYz789',   domain: '.facebook.com' },
 ];
 
+// Works with legacy FCA format (key)
+const rawFromLegacy = [
+  { key: 'c_user', value: '100012345', domain: '.facebook.com', expires: 'Infinity' },
+  { key: 'xs',     value: 'abc:def',   domain: '.facebook.com' },
+  { key: 'datr',   value: 'xYz789',   domain: '.facebook.com' },
+];
+
+// Works with mixed format (both key and name)
+const rawFromMixed = [
+  { key: 'c_user', name: 'c_user', value: '100012345', domain: '.facebook.com' },
+  { key: 'xs', name: 'xs', value: 'abc:def', domain: '.facebook.com' },
+  { key: 'datr', name: 'datr', value: 'xYz789', domain: '.facebook.com' },
+];
+
 const [cookies, diagnostics] = normalizeCookies(rawFromChrome);
-// cookies: AppStateCookie[] (key/expires normalized)
+// cookies: AppStateCookie[] (key/name normalized, both fields included)
 // diagnostics: string[] (every action taken: aliasing, dedup, expiry warnings)
 
 console.log(diagnostics);
@@ -168,11 +182,7 @@ const validated = validateAppState(rawFromChrome);
 
 ### Pre-Login Validation
 
-`validateAppState` performs these checks in order:
-
-1. **Required cookies present** — `c_user`, `xs`, and `datr` must all be present after normalization.
-2. **Required cookies not expired** — if any required cookie carries an explicit `expires` / `expirationDate` that is already in the past, validation throws with a descriptive message listing the expired cookies.
-3. **Deduplication** — cookies with the same `key + domain` are deduplicated (last wins) before the required-cookie check.
+v0.1.9 adds **pre-flight checks** in `AuthManager.bootstrap()` that verify cookie integrity before contacting Facebook:
 
 ```typescript
 import { validateAppState, InvalidAppStateError } from 'panindigan-fca';
@@ -184,10 +194,30 @@ try {
     // err.context.missingCookie     — which required cookie is absent
     // err.context.expiredCookies    — list of expired required cookies
     // err.context.normalizationDiagnostics — full normalization trace
+    // err.context.diagnostics        — detailed cookie status (required/recommended)
     console.error(err.message, err.context);
   }
 }
 ```
+
+**Validation checks performed in order:**
+
+1. **Required cookies present** — `c_user`, `xs`, and `datr` must all be present after normalization.
+2. **Required cookies not expired** — if any required cookie carries an explicit `expires` / `expirationDate` that is already in the past, validation throws.
+3. **Deduplication** — cookies with the same `key + domain` are deduplicated (last wins).
+4. **Domain validation** — warns about invalid domains (supports `facebook.com`, `.facebook.com`, `m.facebook.com`, `www.facebook.com`).
+5. **Duplicate detection** — logs warnings when duplicate cookies are found.
+
+**Pre-flight checks in bootstrap():**
+
+Before making any HTTP requests to Facebook, the library now:
+- Verifies cookie count is non-zero
+- Checks all required cookies are present
+- Validates recommended cookies (`fr`, `sb`, `wd`, `presence`)
+- Detects duplicate cookies and invalid domains
+- Aborts authentication immediately if required cookies are missing
+
+This prevents wasting HTTP requests on invalid AppState and provides actionable error messages.
 
 ---
 

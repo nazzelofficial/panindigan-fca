@@ -53,9 +53,13 @@ export interface RawCookieInput {
  * Extended in v0.1.8 to carry all fields from {@link RawCookieInput} so that
  * round-tripping through `normalizeCookies → validateAppState → hydrateJar →
  * exportJar` preserves the original metadata.
+ *
+ * Extended in v0.1.9 to include both `key` and `name` fields for maximum
+ * compatibility with legacy and modern FCA implementations.
  */
 export interface AppStateCookie {
   key: string;
+  name: string; // Included for compatibility with modern cookie formats
   value: string;
   domain: string;
   path: string;
@@ -147,6 +151,7 @@ export function normalizeCookies(raw: unknown[]): [AppStateCookie[], string[]] {
 
     const normalized: AppStateCookie = {
       key: rawKey,
+      name: rawKey, // Include both key and name for compatibility
       value,
       domain,
       path,
@@ -290,18 +295,24 @@ export async function exportJar(jar: CookieJar): Promise<AppStateCookie[]> {
   const store = jar.toJSON() as Record<string, unknown> | undefined;
   const cookies = (store?.['cookies'] as Array<Record<string, unknown>>) ?? [];
 
-  return cookies.map((c) => ({
-    key: String(c['key'] ?? ''),
-    value: String(c['value'] ?? ''),
-    domain: String(c['domain'] ?? '.facebook.com'),
-    path: String(c['path'] ?? '/'),
-    hostOnly: Boolean(c['hostOnly']),
-    secure: Boolean(c['secure']),
-    httpOnly: Boolean(c['httpOnly']),
-    creation: c['creation'] ? String(c['creation']) : new Date().toISOString(),
-    lastAccessed: c['lastAccessed'] ? String(c['lastAccessed']) : new Date().toISOString(),
-    expires: c['expires'] ? String(c['expires']) : 'Infinity',
-  }));
+  return cookies.map((c) => {
+    const key = String(c['key'] ?? '');
+    return {
+      key,
+      name: key, // Include both key and name for maximum compatibility
+      value: String(c['value'] ?? ''),
+      domain: String(c['domain'] ?? '.facebook.com'),
+      path: String(c['path'] ?? '/'),
+      hostOnly: Boolean(c['hostOnly']),
+      secure: Boolean(c['secure']),
+      httpOnly: Boolean(c['httpOnly']),
+      creation: c['creation'] ? String(c['creation']) : new Date().toISOString(),
+      lastAccessed: c['lastAccessed'] ? String(c['lastAccessed']) : new Date().toISOString(),
+      expires: c['expires'] ? String(c['expires']) : 'Infinity',
+      sameSite: c['sameSite'] ? String(c['sameSite']) : undefined,
+      session: c['session'] ? Boolean(c['session']) : undefined,
+    };
+  });
 }
 
 // ── getUserIdFromJar ──────────────────────────────────────────────────────────

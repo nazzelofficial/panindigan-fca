@@ -212,7 +212,11 @@ describe('branch coverage for utilities and error paths', () => {
   it('covers auth refresh and logout lifecycles', async () => {
     vi.useFakeTimers();
     const jar = new CookieJar();
-    jar.setCookieSync('c_user=1', 'https://facebook.com/');
+    // Add required cookies to pass pre-flight checks
+    jar.setCookieSync('c_user=1234567890', 'https://facebook.com');
+    jar.setCookieSync('xs=test-xs-token', 'https://facebook.com');
+    jar.setCookieSync('datr=test-datr-token', 'https://facebook.com');
+    
     const http = {
       get: vi.fn()
         .mockResolvedValueOnce({ text: async () => '<html>"DTSGInitialData", [], {"token":"abc"} "LSD", [], {"token":"def"}</html>' })
@@ -241,7 +245,11 @@ describe('branch coverage for utilities and error paths', () => {
 
   it('covers auth error paths and two-factor authentication', async () => {
     const jar = new CookieJar();
-    jar.setCookieSync('c_user=1', 'https://facebook.com/');
+    // Add required cookies to pass pre-flight checks
+    jar.setCookieSync('c_user=1234567890', 'https://facebook.com');
+    jar.setCookieSync('xs=test-xs-token', 'https://facebook.com');
+    jar.setCookieSync('datr=test-datr-token', 'https://facebook.com');
+    
     const http = {
       get: vi.fn(async () => ({ text: async () => '<html>"DTSGInitialData", [], {"token":"abc"} "LSD", [], {"token":"def"}</html>' })),
       post: vi.fn(),
