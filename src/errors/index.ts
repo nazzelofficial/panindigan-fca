@@ -166,6 +166,17 @@ export class StorageError extends PandindiganError {
   }
 }
 
+/**
+ * Thrown when a request is blocked because the target endpoint's circuit
+ * breaker is in the OPEN state. The caller should wait for the recovery window
+ * (`circuitBreakerRecoveryMs`) before retrying.
+ */
+export class StorageCircuitOpenError extends PandindiganError {
+  constructor(message: string, context?: Record<string, unknown>, cause?: unknown) {
+    super(message, 'PFCA_STORAGE_CIRCUIT_OPEN', context, cause);
+  }
+}
+
 export class CacheError extends PandindiganError {
   constructor(message: string, context?: Record<string, unknown>, cause?: unknown) {
     super(message, 'PFCA_CACHE', context, cause);

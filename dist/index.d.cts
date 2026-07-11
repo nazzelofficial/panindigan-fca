@@ -5,6 +5,55 @@ import { Agent, ProxyAgent } from 'undici';
 import * as https from 'node:https';
 import { Readable } from 'node:stream';
 
+/**
+ * Raw cookie input shape accepted from **any** AppState exporter.
+ *
+ * Covers:
+ * - Our canonical format (`key`, `expires`)
+ * - Chrome DevTools / extension exports (`name`, `expirationDate` in epoch seconds)
+ * - Firefox cookie exports (`name`, `session`)
+ * - Netscape / curl export format
+ *
+ * {@link normalizeCookies} maps all variants to {@link AppStateCookie} before
+ * any validation or hydration.
+ */
+interface RawCookieInput {
+    /** Canonical key field. Falls back to `name` if absent. */
+    key?: string;
+    /** Chrome / Firefox extension alias for `key`. */
+    name?: string;
+    /** Cookie value. `null` / missing entries are skipped during normalization. */
+    value?: string | null;
+    domain?: string;
+    path?: string;
+    /** Expiry as ISO string, Unix seconds number, or `"Infinity"`. */
+    expires?: string | number;
+    /**
+     * Chrome extension format: epoch seconds (possibly fractional).
+     * Takes precedence over `expires` when both are present.
+     */
+    expirationDate?: number;
+    secure?: boolean;
+    httpOnly?: boolean;
+    hostOnly?: boolean;
+    /** True for session-only cookies (no persistent expiry). */
+    session?: boolean;
+    sameSite?: string;
+    /** Cookie priority: `"Low"` | `"Medium"` | `"High"`. */
+    priority?: string;
+    /** `"Secure"` | `"NonSecure"` — from Chrome DevTools Protocol. */
+    sourceScheme?: string;
+    sourcePort?: number | string;
+    creation?: string;
+    lastAccessed?: string;
+}
+/**
+ * Canonical AppState cookie shape used throughout the library.
+ *
+ * Extended in v0.1.8 to carry all fields from {@link RawCookieInput} so that
+ * round-tripping through `normalizeCookies → validateAppState → hydrateJar →
+ * exportJar` preserves the original metadata.
+ */
 interface AppStateCookie {
     key: string;
     value: string;
@@ -17,10 +66,47 @@ interface AppStateCookie {
     httpOnly?: boolean;
     expires?: string | number;
     sameSite?: string;
+    session?: boolean;
+    priority?: string;
+    sourceScheme?: string;
+    sourcePort?: number | string;
 }
+/**
+ * Normalize an array of raw cookie objects from any supported exporter into
+ * the canonical {@link AppStateCookie} schema.
+ *
+ * Operations performed (in order):
+ * 1. **Field aliasing** — `name` → `key`, `expirationDate` → `expires`
+ * 2. **Domain repair** — missing domain defaults to `.facebook.com`
+ * 3. **Expiry detection** — cookies whose expiry is in the past are noted in
+ *    diagnostics but not removed (Facebook session validity is server-side)
+ * 4. **Deduplication** — when two entries share the same `key` + `domain`
+ *    combination the later one wins (browser last-write-wins semantics)
+ * 5. **Silent skip** — entries with no resolvable key or a `null` value are
+ *    skipped with a diagnostic note instead of throwing
+ *
+ * @returns `[normalizedCookies, diagnostics]` — diagnostics is a human-readable
+ *   list of every normalization action taken; useful for `debugAppState` logs.
+ */
+declare function normalizeCookies(raw: unknown[]): [AppStateCookie[], string[]];
+/**
+ * Validate (and normalize) an AppState array for use with the library.
+ *
+ * - Accepts the full {@link RawCookieInput} shape (all field variants)
+ * - Normalizes via {@link normalizeCookies} before checking required cookies
+ * - Throws {@link InvalidAppStateError} with a descriptive message when:
+ *   - Input is not a non-empty array
+ *   - A required cookie (`c_user`, `xs`, `datr`) is missing after normalization
+ *   - A required cookie carries an explicit expiry that is already in the past
+ *
+ * @returns Normalized, validated cookies ready for {@link hydrateJar}.
+ */
 declare function validateAppState(appState: unknown): AppStateCookie[];
+/** Hydrate a `tough-cookie` jar from a validated AppState cookie array. */
 declare function hydrateJar(appState: AppStateCookie[]): CookieJar;
+/** Export all cookies from a `tough-cookie` jar as an AppState array. */
 declare function exportJar(jar: CookieJar): Promise<AppStateCookie[]>;
+/** Extract the Facebook user ID (`c_user` cookie value) from a hydrated jar. */
 declare function getUserIdFromJar(jar: CookieJar): string;
 
 interface MessageEvent {
@@ -1833,6 +1919,29 @@ interface AppStateLoadOptions {
  */
 declare function loadAppState(options?: AppStateLoadOptions): AppStateResult;
 
+/**
+ * Live metrics snapshot returned by {@link StorageApiClient.getMetrics}.
+ */
+interface StorageClientMetrics {
+    /** Total HTTP requests attempted (all endpoints, all attempts). */
+    totalRequests: number;
+    /** Requests that returned a 2xx status. */
+    successRequests: number;
+    /** Requests that failed (non-2xx, timeout, or network error). */
+    errorRequests: number;
+    /** Number of times any endpoint's circuit breaker tripped to OPEN. */
+    circuitBreakerTrips: number;
+    /** Latency of the most recent completed request (ms). */
+    lastLatencyMs: number;
+    /** Rolling average latency over the last ≤200 samples (ms). */
+    avgLatencyMs: number;
+    /**
+     * 95th-percentile latency over the last ≤200 samples (ms).
+     * `null` until at least 10 samples have been collected.
+     */
+    p95LatencyMs: number | null;
+}
+
 declare class PandindiganError extends Error {
     readonly code: string;
     readonly context: Record<string, unknown>;
@@ -1897,6 +2006,14 @@ declare class DeserializationError extends ParseError {
     constructor(message: string, context?: Record<string, unknown>, cause?: unknown);
 }
 declare class StorageError extends PandindiganError {
+    constructor(message: string, context?: Record<string, unknown>, cause?: unknown);
+}
+/**
+ * Thrown when a request is blocked because the target endpoint's circuit
+ * breaker is in the OPEN state. The caller should wait for the recovery window
+ * (`circuitBreakerRecoveryMs`) before retrying.
+ */
+declare class StorageCircuitOpenError extends PandindiganError {
     constructor(message: string, context?: Record<string, unknown>, cause?: unknown);
 }
 declare class CacheError extends PandindiganError {
@@ -3053,4 +3170,4 @@ declare function parseThreadSearchResponse(text: string): ThreadSearchResponse;
 declare function parseUploadResponse(text: string): UploadResponse;
 declare function parseLoginResponse(text: string): LoginResponse;
 
-export { API_ENDPOINTS, type AccountCheckpointEvent, type AccountHealthyEvent, type AccountRefreshEvent, type AccountRefreshFailedEvent, type AccountRestrictedEvent, type AccountStaleEvent, type AccountSuspendedEvent, type AccountWarningEvent, type ApiEndpointName, type AppStateCookie, type AppStateInputType, type AppStateLoadOptions, type AppStateRefreshFailedEvent, type AppStateResult, AttachmentSchema, AuthError, AuthManager, type BrowserFingerprint, CacheError, CacheManager, type CacheManagerOptions, CheckpointRequiredError, type ClientEventMap, type ClientOptions, type Config, ConfigurationError, type ConnectedEvent, ConnectionError, type CreateGroupOptions, type CreatePollOptions, DEFAULT_CACHE_MAX_SIZE, DEFAULT_CACHE_TTL_MS, DNSError, DeserializationError, DiagnosticsModule, type DiagnosticsStats, type DisconnectedEvent, DownloadError, type DownloadOptions, type EndpointDefinition, type ErrorContext, FileStorageAdapter, FilesModule, ForbiddenError, type FormRequestOptions, type FriendListOptions, type FriendListResponse, FriendListResponseSchema, GRAPHQL_FRIENDLY_NAMES, type GraphQLBodyOptions, type HealthCheckResult, HttpClient, HttpError, type HttpMethod, type HttpRequestOptions, type HttpResponse, InvalidAppStateError, LibSqlSessionStore, LibSqlStorageAdapter, type LightspeedRequestOptions, type Logger, LoginFailedError, type LoginResponse, LoginResponseSchema, MemoryStorageAdapter, type Message, type MessageAttachment, type MessageDeliveredEvent, type MessageEvent, type MessageListResponse, MessageListResponseSchema, type MessageNode, MessageNodeSchema, type MessageReactionEvent, type MessageReactionRemovedEvent, type MessageSearchResponse, MessageSearchResponseSchema, type MessageSearchResult, type MessageSeenEvent, type MessageUnsendEvent, MessagesModule, type Middleware, type MultipartField, type MultipartFile, NetworkError, NotFoundError, PandindiganClient, PandindiganError, ParseError, type ParsedAttachment, type ParsedMessageSearchNode, type ParsedPollOption, type ParsedPresenceEntry, type ParsedThreadSearchNode, type ParsedUserProfile, type Poll, type PollOption, PollOptionSchema, type PollResponse, PollResponseSchema, PollsModule, PresenceEntrySchema, PresenceModule, type PresenceResponse, PresenceResponseSchema, type PresenceStatus, type PresenceUpdateEvent, type ProxyConfig, ProxyError, ProxyManager, type ProxyOptions, RateLimitError, type ReconnectFailedEvent, type ReconnectedEvent, type ReconnectingEvent, type ReplyOptions, type RequestContext, type RequestSpec, type ResponseContext, ResponseValidationError, SearchModule, type SearchOptions, type SearchUsersOptions, type SendMessageOptions, type SendMessageResponse, SendMessageResponseSchema, type SendMessageResult, type SendStickerOptions, type SendStickerResult, ServerError, SessionExpiredError, type SessionRestoredEvent, type SessionRow, type SessionSavedEvent, type SessionTokens, SessionsModule, StealthManager, type StickerMeta, type StickerPack, StickersModule, type StorageAdapter, type StorageDiagnostics, StorageError, type Thread, type ThreadListOptions, type ThreadListResponse, ThreadListResponseSchema, type ThreadMutedEvent, type ThreadNode, ThreadNodeSchema, type ThreadParticipantAddedEvent, type ThreadParticipantRemovedEvent, type ThreadPhotoChangedEvent, type ThreadReadEvent, type ThreadRenamedEvent, type ThreadSearchResponse, ThreadSearchResponseSchema, type ThreadSearchResult, type ThreadTypingEvent, ThreadsModule, TimeoutError, TwoFactorRequiredError, TypedEventEmitter, UploadError, type UploadOptions, type UploadResponse, UploadResponseSchema, type UploadResult, type UserProfile, type UserProfileResponse, UserProfileResponseSchema, UserProfileSchema, UsersModule, type VotePollOptions, buildFormRequest as buildFormRequestBody, buildGraphQLBody, buildGraphQLRequest as buildGraphQLRequestBody, buildJsonBody, buildLightspeedBody, buildMultipartBody, buildStealthHeaders, clearDnsCache, createClient, createLogger, cryptoRandomFloat, cryptoRandomInt, decrypt, encodeFormBody, encrypt, exportJar, extractAttachmentId, generateBoundary, generateFingerprint, getEndpointUrl, getUserIdFromJar, hmac, humanDelay, hydrateJar, isGraphQLEndpoint, isMessageSendEndpoint, loadAppState, loadConfig, login, makeFormRequestSpec, makeMultipartRequestSpec, maskProxyUrl, normalizeCacheOptions, nsKey, parseFriendListResponse, parseLoginResponse, parseMessageListResponse, parseMessageSearchResponse, parsePollResponse, parsePresenceResponse, parseRawResponse, parseSendMessageResponse, parseThreadListResponse, parseThreadSearchResponse, parseUploadResponse, parseUserProfileResponse, randomHex, resolveProxyUrl, resolveWithCache, stripFbPrefix, validate, validateAppState };
+export { API_ENDPOINTS, type AccountCheckpointEvent, type AccountHealthyEvent, type AccountRefreshEvent, type AccountRefreshFailedEvent, type AccountRestrictedEvent, type AccountStaleEvent, type AccountSuspendedEvent, type AccountWarningEvent, type ApiEndpointName, type AppStateCookie, type AppStateInputType, type AppStateLoadOptions, type AppStateRefreshFailedEvent, type AppStateResult, AttachmentSchema, AuthError, AuthManager, type BrowserFingerprint, CacheError, CacheManager, type CacheManagerOptions, CheckpointRequiredError, type ClientEventMap, type ClientOptions, type Config, ConfigurationError, type ConnectedEvent, ConnectionError, type CreateGroupOptions, type CreatePollOptions, DEFAULT_CACHE_MAX_SIZE, DEFAULT_CACHE_TTL_MS, DNSError, DeserializationError, DiagnosticsModule, type DiagnosticsStats, type DisconnectedEvent, DownloadError, type DownloadOptions, type EndpointDefinition, type ErrorContext, FileStorageAdapter, FilesModule, ForbiddenError, type FormRequestOptions, type FriendListOptions, type FriendListResponse, FriendListResponseSchema, GRAPHQL_FRIENDLY_NAMES, type GraphQLBodyOptions, type HealthCheckResult, HttpClient, HttpError, type HttpMethod, type HttpRequestOptions, type HttpResponse, InvalidAppStateError, LibSqlSessionStore, LibSqlStorageAdapter, type LightspeedRequestOptions, type Logger, LoginFailedError, type LoginResponse, LoginResponseSchema, MemoryStorageAdapter, type Message, type MessageAttachment, type MessageDeliveredEvent, type MessageEvent, type MessageListResponse, MessageListResponseSchema, type MessageNode, MessageNodeSchema, type MessageReactionEvent, type MessageReactionRemovedEvent, type MessageSearchResponse, MessageSearchResponseSchema, type MessageSearchResult, type MessageSeenEvent, type MessageUnsendEvent, MessagesModule, type Middleware, type MultipartField, type MultipartFile, NetworkError, NotFoundError, PandindiganClient, PandindiganError, ParseError, type ParsedAttachment, type ParsedMessageSearchNode, type ParsedPollOption, type ParsedPresenceEntry, type ParsedThreadSearchNode, type ParsedUserProfile, type Poll, type PollOption, PollOptionSchema, type PollResponse, PollResponseSchema, PollsModule, PresenceEntrySchema, PresenceModule, type PresenceResponse, PresenceResponseSchema, type PresenceStatus, type PresenceUpdateEvent, type ProxyConfig, ProxyError, ProxyManager, type ProxyOptions, RateLimitError, type RawCookieInput, type ReconnectFailedEvent, type ReconnectedEvent, type ReconnectingEvent, type ReplyOptions, type RequestContext, type RequestSpec, type ResponseContext, ResponseValidationError, SearchModule, type SearchOptions, type SearchUsersOptions, type SendMessageOptions, type SendMessageResponse, SendMessageResponseSchema, type SendMessageResult, type SendStickerOptions, type SendStickerResult, ServerError, SessionExpiredError, type SessionRestoredEvent, type SessionRow, type SessionSavedEvent, type SessionTokens, SessionsModule, StealthManager, type StickerMeta, type StickerPack, StickersModule, type StorageAdapter, StorageCircuitOpenError, type StorageClientMetrics, type StorageDiagnostics, StorageError, type Thread, type ThreadListOptions, type ThreadListResponse, ThreadListResponseSchema, type ThreadMutedEvent, type ThreadNode, ThreadNodeSchema, type ThreadParticipantAddedEvent, type ThreadParticipantRemovedEvent, type ThreadPhotoChangedEvent, type ThreadReadEvent, type ThreadRenamedEvent, type ThreadSearchResponse, ThreadSearchResponseSchema, type ThreadSearchResult, type ThreadTypingEvent, ThreadsModule, TimeoutError, TwoFactorRequiredError, TypedEventEmitter, UploadError, type UploadOptions, type UploadResponse, UploadResponseSchema, type UploadResult, type UserProfile, type UserProfileResponse, UserProfileResponseSchema, UserProfileSchema, UsersModule, type VotePollOptions, buildFormRequest as buildFormRequestBody, buildGraphQLBody, buildGraphQLRequest as buildGraphQLRequestBody, buildJsonBody, buildLightspeedBody, buildMultipartBody, buildStealthHeaders, clearDnsCache, createClient, createLogger, cryptoRandomFloat, cryptoRandomInt, decrypt, encodeFormBody, encrypt, exportJar, extractAttachmentId, generateBoundary, generateFingerprint, getEndpointUrl, getUserIdFromJar, hmac, humanDelay, hydrateJar, isGraphQLEndpoint, isMessageSendEndpoint, loadAppState, loadConfig, login, makeFormRequestSpec, makeMultipartRequestSpec, maskProxyUrl, normalizeCacheOptions, normalizeCookies, nsKey, parseFriendListResponse, parseLoginResponse, parseMessageListResponse, parseMessageSearchResponse, parsePollResponse, parsePresenceResponse, parseRawResponse, parseSendMessageResponse, parseThreadListResponse, parseThreadSearchResponse, parseUploadResponse, parseUserProfileResponse, randomHex, resolveProxyUrl, resolveWithCache, stripFbPrefix, validate, validateAppState };

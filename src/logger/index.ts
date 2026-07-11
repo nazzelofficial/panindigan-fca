@@ -99,21 +99,47 @@ export function createLogger(options: {
     },
   ) as unknown as AnyPinoLogger;
 
-  function wrap(p: AnyPinoLogger): Logger {
-    const pw = p as PinoWithCustomLevels;
+  /**
+   * Build a Logger whose pino child is always constructed from the clean `base`
+   * with a flat set of accumulated bindings. This prevents pino from stacking
+   * duplicate keys (e.g. `"tag":"PFCA","tag":"CLIENT"`) when:
+   *  - child() is called with a key that already exists in the parent bindings, OR
+   *  - a per-call ctx object overrides a key that is already bound.
+   *
+   * @param bound - Flat merged bindings in effect for this logger level.
+   */
+  function wrap(bound: Record<string, unknown>): Logger {
+    // Always build the pino child from the clean `base` so the JSON has exactly
+    // the keys in `bound` — never inherited duplicates from an ancestor child.
+    const p = Object.keys(bound).length > 0
+      ? (base.child(bound) as unknown as PinoWithCustomLevels)
+      : (base as unknown as PinoWithCustomLevels);
+
+    // When ctx overlaps with a bound key, merge both into a fresh child from
+    // base so the JSON output never contains duplicate field names.
+    function resolve(ctx: Record<string, unknown> | undefined): [PinoWithCustomLevels, Record<string, unknown>] {
+      if (!ctx) return [p, {}];
+      const hasConflict = Object.keys(ctx).some((k) => Object.prototype.hasOwnProperty.call(bound, k));
+      if (hasConflict) {
+        return [base.child({ ...bound, ...ctx }) as unknown as PinoWithCustomLevels, {}];
+      }
+      return [p, ctx];
+    }
+
     return {
-      trace:   (msg, ctx) => p.trace(ctx ?? {}, msg),
-      debug:   (msg, ctx) => p.debug(ctx ?? {}, msg),
-      info:    (msg, ctx) => p.info(ctx ?? {}, msg),
-      success: (msg, ctx) => pw.success(ctx ?? {}, msg),
-      warn:    (msg, ctx) => p.warn(ctx ?? {}, msg),
-      error:   (msg, ctx) => p.error(ctx ?? {}, msg),
-      fatal:   (msg, ctx) => p.fatal(ctx ?? {}, msg),
-      child:   (bindings) => wrap(p.child(bindings)),
+      trace:   (msg, ctx) => { const [l, c] = resolve(ctx); l.trace(c, msg); },
+      debug:   (msg, ctx) => { const [l, c] = resolve(ctx); l.debug(c, msg); },
+      info:    (msg, ctx) => { const [l, c] = resolve(ctx); l.info(c, msg); },
+      success: (msg, ctx) => { const [l, c] = resolve(ctx); l.success(c, msg); },
+      warn:    (msg, ctx) => { const [l, c] = resolve(ctx); l.warn(c, msg); },
+      error:   (msg, ctx) => { const [l, c] = resolve(ctx); l.error(c, msg); },
+      fatal:   (msg, ctx) => { const [l, c] = resolve(ctx); l.fatal(c, msg); },
+      // Merge new bindings over the accumulated set so later values win.
+      child:   (bindings) => wrap({ ...bound, ...bindings }),
     };
   }
 
-  const logger = wrap(options.bindings ? base.child(options.bindings) : base);
+  const logger = wrap(options.bindings ?? {});
   return logger;
 }
 

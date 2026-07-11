@@ -8,6 +8,154 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ---
 
 
+## [0.1.8] - 2026-07-11
+
+### Fixed
+
+#### Storage API Transport — Root Cause of ESM Health-Check Failure (Critical)
+- **Primary root cause identified and resolved:** `StorageApiClient` used `require('http')` / `require('https')` to load
+  Node.js built-in HTTP modules at runtime inside `getTransport()`. In the ESM build (`dist/index.js`, used by
+  Docker / Koyeb / Bun), Node.js provides no global `require`, so every attempt threw `ReferenceError`
+  immediately. The error was caught by the retry loop, producing three rapid back-off attempts
+  (≈ 599 ms total) before fallback mode was activated — matching exactly the `"matching the observed bootstrap duration seen in production logs.`
+  seen in production logs. The entire HTTP transport layer has been rewritten to use **`undici.request()`**,
+  which was already a declared dependency, is fully ESM-compatible, and handles HTTPS, keep-alive, and
+  connection pooling natively with zero eliminating runtime CommonJS dependencies from the transport layer.
+
+### Added
+
+#### Storage API — Per-Endpoint Circuit Breaker
+- `StorageApiClient` now includes a per-endpoint circuit breaker (CLOSED → OPEN → recovery-probe
+  → CLOSED). The circuit opens after `circuitBreakerThreshold` consecutive failures (default 3) and
+  blocks further requests until `circuitBreakerRecoveryMs` elapses (default 30 s). One recovery probe
+  is then attempted; success closes the circuit, failure resets the open timer. Concurrent recovery probes
+  are deduplicated via a `probeInFlight` flag.
+- New `ApiClientOptions` fields: `circuitBreakerThreshold?: number`, `circuitBreakerRecoveryMs?: number`.
+- New `getCircuitStates(): Record<string, 'closed' | 'open'>` method exposes per-endpoint circuit state.
+- New `StorageCircuitOpenError` exported from the top-level package for callers that need to distinguish
+  circuit-open rejections from ordinary storage failures.
+
+#### Storage API — Request Metrics
+- `StorageApiClient.getMetrics()` now returns a `StorageClientMetrics` snapshot:
+  `totalRequests`, `successRequests`, `errorRequests`, `circuitBreakerTrips`, `lastLatencyMs`,
+  `avgLatencyMs`, and `p95LatencyMs` (available after ≥ 10 samples). `StorageClientMetrics` is
+  exported as a named type from the top-level package.
+
+#### Cookie Normalization Pipeline (`normalizeCookies`)
+- New exported function `normalizeCookies(raw: unknown[]): [AppStateCookie[], string[]]` handles all
+  known AppState exporter formats in a single pass:
+  - **Field aliasing**: `name` → `key` (Chrome/Firefox extension format),
+    `expirationDate` → `expires` (Chrome DevTools Protocol, epoch seconds).
+  - **Deduplication**: entries sharing the same `key + domain` are deduplicated; the last entry wins
+    (browser last-write-wins semantics). Diagnostic messages record every dedup action.
+  - **Expiry detection**: cookies with an explicit `expirationDate` / `expires` in the past are noted
+    in the returned diagnostics array. They are not removed — Facebook session validity is server-side.
+  - **Default repair**: missing `domain` defaults to `.facebook.com`; missing `path` defaults to `/`.
+  - **Silent skip with diagnostics**: entries with no resolvable key, a `null` / missing value, or a
+    non-object type are skipped and noted in diagnostics rather than throwing.
+
+#### `AppStateCookie` Interface — Extended Fields
+- `AppStateCookie` now carries all fields from `RawCookieInput`: `sameSite`, `session`, `priority`,
+  `sourceScheme`, `sourcePort`. These are preserved through normalization and `hydrateJar` passes
+  `sameSite` to the `tough-cookie` `Cookie` constructor.
+- New `RawCookieInput` interface exported from the top-level package — describes the full set of field
+  variants accepted by `normalizeCookies` and `validateAppState`.
+
+#### `validateAppState` — Pre-Login Validation
+- `validateAppState` now calls `normalizeCookies` internally before checking required cookies, so any
+  input format (canonical, Chrome, Firefox, mixed) is accepted.
+- **Expired required-cookie detection**: if `c_user`, `xs`, or `datr` carries an explicit `expires` /
+  `expirationDate` that is in the past, `validateAppState` throws `InvalidAppStateError` with a message
+  listing the affected cookies and instructing the user to export a fresh AppState.
+- `InvalidAppStateError` context objects now include `normalizationDiagnostics: string[]` for debugging
+  malformed input.
+
+#### `hydrateJar` — `sameSite` and `session` Support
+- `hydrateJar` now passes `sameSite` from the cookie entry to the `tough-cookie` constructor.
+- Session cookies (`session: true`) are hydrated without a fixed expiry timestamp.
+
+### Changed
+
+#### `StorageApiClient` — Transport Internals
+- Removed `getTransport()` method and the `declare function require(...)` TypeScript declaration that
+  tried to paper over the ESM/CJS split. The class no longer imports or calls `node:http` / `node:https`.
+- `sendRequest` now calls `undici.request()` with `AbortSignal.timeout(timeoutMs)` (requires Node ≥ 17.3,
+  which is satisfied by the `engines: { node: ">=22" }` constraint).
+
+### Tests
+
+- New file `tests/unit/cookie-normalization.test.ts` (35 test cases): covers `normalizeCookies` (all field
+  variants, dedup, expiry detection, skipping), `validateAppState` integration, `hydrateJar` extended fields,
+  and a full round-trip (normalize → validate → hydrate → export).
+- New file `tests/unit/storage-circuit-breaker.test.ts` (24 test cases): covers undici transport
+  (ESM-safety, auth headers, error cases), retry back-off, endpoint failover, circuit breaker state machine
+  (open/close/recovery/probe/concurrent-probe prevention), metrics accumulation, and
+  `LibSqlStorageAdapter` integration (fallback, reconnect, queue replay, replay-failure stop semantics).
+- `tests/unit/auth-storage.test.ts` updated: removed `vi.mock('node:http')` / `vi.mock('node:https')`
+  (no longer used); added `vi.mock('undici')` with `vi.hoisted()` to avoid the "cannot access before
+  initialization" hoisting error; second test now verifies that undici is called with the correct URL and
+  `Authorization` header rather than exercising the defunct `require()`-based transport.
+- Total: **All 220 automated tests across 11 suites are passing.**
+  Coverage includes:
+- transport
+- retry logic
+- circuit breaker
+- endpoint failover
+- queue replay
+- AppState normalization
+- cookie hydration
+- authentication validation
+- storage integration.
+
+### Performance
+
+- Reduced Storage API bootstrap overhead by removing runtime transport resolution.
+- Reused persistent HTTP connections through Undici's connection pooling.
+- Lower memory allocations during Storage API requests.
+- Improved startup reliability in pure ESM environments.
+
+---
+
+## [0.1.7] - 2026-07-11
+
+### Fixed
+
+#### Logger — Duplicate JSON Field Names
+- **Critical logging correctness fix:** `createLogger` / `Logger.child()` previously called pino's built-in
+  `child()` on a pino instance that already carried parent bindings. Pino stacks child bindings rather than
+  merging them, producing invalid JSON objects with repeated field names
+  (e.g. `{"tag":"PFCA","tag":"CLIENT"}`). The internal `wrap()` helper now tracks accumulated bindings as a
+  plain object and always reconstructs the pino child from the clean base logger with a fully-merged flat
+  binding set. Both `child(bindings)` calls and per-call `ctx` arguments now correctly override parent keys
+  rather than duplicating them.
+
+#### `LibSqlStorageAdapter` — Incorrect `failoverUsed` in Bootstrap Warning Log
+- The WARN log emitted when remote storage is unavailable at startup hardcoded `failoverUsed: false` even
+  though `this.failoverUsed` was set to `true` two lines earlier. The log now emits the correct runtime
+  value (`failoverUsed: this.failoverUsed`).
+
+#### `LibSqlStorageAdapter.clear()` — Inconsistent Error Handling
+- `clear()` previously threw a `StorageError` on remote failure, while `set()` and `delete()` silently
+  queue their writes for replay. `clear()` now follows the same pattern — remote failure queues the
+  operation instead of propagating an exception — making the storage layer consistently non-throwing
+  and honouring the reliability contract that storage must never block bot operation.
+
+#### `StorageApiClient.sleep()` — Phantom Double-Timer
+- The sleep helper used `setTimeout(resolve, ms).unref?.() ?? setTimeout(resolve, ms)`. When `.unref` is
+  absent (Bun, browser-adjacent runtimes), `unref?.()` returns `undefined`, triggering the `??` fallback
+  and spawning a second `setTimeout`. The second resolve is a no-op on an already-settled promise, but the
+  dangling timer held the event loop open unnecessarily. Fixed to the idiomatic form: store the timer
+  reference, then call `.unref?.()` on it separately.
+
+#### `LibSqlStorageAdapter` — `retryCount` Double-Increments
+- `retryCount` incremented both in `enqueuePendingWrite()` (when a write was queued) and in
+  `replayPendingWrites()` (when the same write was successfully replayed), so every write that passed
+  through fallback mode was counted twice. The increment in `replayPendingWrites` has been removed;
+  `retryCount` now accurately reflects the number of writes that could not reach the remote immediately
+  and were queued for replay.
+
+---
+
 ## [0.1.6] - 2026-07-10
 
 ### Added

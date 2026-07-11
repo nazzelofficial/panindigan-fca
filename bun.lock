@@ -516,7 +516,7 @@
 
     "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
 
-    "user-agents": ["user-agents@2.1.116", "", {}, "sha512-7KnkUn2hQi+pA53EzIXao6XIs14kFoJtAb806AO00edCCpaYu+ThrDzj+OMStwD9PZj5hNSQslj7B2q6saFa+g=="],
+    "user-agents": ["user-agents@2.1.118", "", {}, "sha512-5i8Ew3dzlJgktal1icK0LDo/ByOqgj80cj5iPkYaxw82ebb2SG9P42ObB6Z9YsguEOOFmWokjhgjFwj1lJ6AAg=="],
 
     "uuid": ["uuid@14.0.1", "", { "bin": { "uuid": "dist-node/bin/uuid" } }, "sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew=="],
 

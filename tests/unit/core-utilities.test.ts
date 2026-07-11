@@ -381,9 +381,10 @@ describe('core utility modules', () => {
     mockStorageApiClient.delete.mockRejectedValueOnce(new Error('delete failed'));
     await expect(remote.delete('key')).resolves.toBeUndefined();
 
-    // Test clear error path — clear is destructive and cannot be safely queued; it still throws.
+    // Test clear error path — v0.1.7: clear() now queues silently like set()/delete() instead of
+    // throwing, so it is consistent with the storage reliability contract.
     mockStorageApiClient.clear.mockRejectedValueOnce(new Error('clear failed'));
-    await expect(remote.clear()).rejects.toThrow(StorageError);
+    await expect(remote.clear()).resolves.toBeUndefined();
 
     // Test bootstrap error path — v0.1.6: bootstrap failure falls back to memory, never throws.
     // Storage must never block Facebook login.

@@ -10,8 +10,8 @@ export { createClient, login, PandindiganClient } from './client/index.js';
 export type { ClientOptions } from './client/index.js';
 
 // ─── AppState / cookies ───────────────────────────────────────────────────────
-export type { AppStateCookie } from './cookies/index.js';
-export { validateAppState, hydrateJar, exportJar, getUserIdFromJar } from './cookies/index.js';
+export type { AppStateCookie, RawCookieInput } from './cookies/index.js';
+export { validateAppState, normalizeCookies, hydrateJar, exportJar, getUserIdFromJar } from './cookies/index.js';
 export type { AppStateResult, AppStateInputType, AppStateLoadOptions } from './auth/AppStateLoader.js';
 export { loadAppState } from './auth/AppStateLoader.js';
 
@@ -29,6 +29,7 @@ export { MemoryStorageAdapter } from './storage/index.js';
 export { FileStorageAdapter } from './storage/index.js';
 export { LibSqlStorageAdapter } from './storage/index.js';
 export type { StorageDiagnostics } from './storage/libsql.js';
+export type { StorageClientMetrics } from './storage/api-client.js';
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 export type { Middleware, RequestContext, ResponseContext, ErrorContext } from './middleware/index.js';
@@ -133,6 +134,7 @@ export {
   ResponseValidationError,
   DeserializationError,
   StorageError,
+  StorageCircuitOpenError,
   CacheError,
   ConfigurationError,
   UploadError,

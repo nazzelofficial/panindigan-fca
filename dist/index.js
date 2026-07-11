@@ -1,10 +1,3 @@
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
-
 // src/client/index.ts
 import "tough-cookie";
 
@@ -178,20 +171,50 @@ function createLogger(options) {
       ...transport ? { transport } : {}
     }
   );
-  function wrap(p) {
-    const pw = p;
+  function wrap(bound) {
+    const p = Object.keys(bound).length > 0 ? base.child(bound) : base;
+    function resolve(ctx) {
+      if (!ctx) return [p, {}];
+      const hasConflict = Object.keys(ctx).some((k) => Object.prototype.hasOwnProperty.call(bound, k));
+      if (hasConflict) {
+        return [base.child({ ...bound, ...ctx }), {}];
+      }
+      return [p, ctx];
+    }
     return {
-      trace: (msg, ctx) => p.trace(ctx ?? {}, msg),
-      debug: (msg, ctx) => p.debug(ctx ?? {}, msg),
-      info: (msg, ctx) => p.info(ctx ?? {}, msg),
-      success: (msg, ctx) => pw.success(ctx ?? {}, msg),
-      warn: (msg, ctx) => p.warn(ctx ?? {}, msg),
-      error: (msg, ctx) => p.error(ctx ?? {}, msg),
-      fatal: (msg, ctx) => p.fatal(ctx ?? {}, msg),
-      child: (bindings) => wrap(p.child(bindings))
+      trace: (msg, ctx) => {
+        const [l, c] = resolve(ctx);
+        l.trace(c, msg);
+      },
+      debug: (msg, ctx) => {
+        const [l, c] = resolve(ctx);
+        l.debug(c, msg);
+      },
+      info: (msg, ctx) => {
+        const [l, c] = resolve(ctx);
+        l.info(c, msg);
+      },
+      success: (msg, ctx) => {
+        const [l, c] = resolve(ctx);
+        l.success(c, msg);
+      },
+      warn: (msg, ctx) => {
+        const [l, c] = resolve(ctx);
+        l.warn(c, msg);
+      },
+      error: (msg, ctx) => {
+        const [l, c] = resolve(ctx);
+        l.error(c, msg);
+      },
+      fatal: (msg, ctx) => {
+        const [l, c] = resolve(ctx);
+        l.fatal(c, msg);
+      },
+      // Merge new bindings over the accumulated set so later values win.
+      child: (bindings) => wrap({ ...bound, ...bindings })
     };
   }
-  const logger = wrap(options.bindings ? base.child(options.bindings) : base);
+  const logger = wrap(options.bindings ?? {});
   return logger;
 }
 var defaultLogger = createLogger({ level: "info" });
@@ -322,6 +345,11 @@ var DeserializationError = class extends ParseError {
 var StorageError = class extends PandindiganError {
   constructor(message, context, cause) {
     super(message, "PFCA_STORAGE", context, cause);
+  }
+};
+var StorageCircuitOpenError = class extends PandindiganError {
+  constructor(message, context, cause) {
+    super(message, "PFCA_STORAGE_CIRCUIT_OPEN", context, cause);
   }
 };
 var CacheError = class extends PandindiganError {
@@ -924,24 +952,46 @@ var FileStorageAdapter = class {
 };
 
 // src/storage/api-client.ts
+import { request as undiciRequest } from "undici";
 function backoffDelayMs(attempt, baseMs = 200, maxMs = 8e3) {
   const cap = Math.min(maxMs, baseMs * Math.pow(2, attempt));
   return Math.random() * cap;
 }
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms).unref?.() ?? setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    t.unref?.();
+  });
 }
 var StorageApiClient = class {
   endpoints;
   authToken;
   timeoutMs;
   retries;
+  circuitThreshold;
+  circuitRecoveryMs;
+  // ── Circuit-breaker state ────────────────────────────────────────────────────
+  circuits = /* @__PURE__ */ new Map();
+  // ── Metrics ───────────────────────────────────────────────────────────────────
+  _metrics = {
+    totalRequests: 0,
+    successRequests: 0,
+    errorRequests: 0,
+    circuitBreakerTrips: 0,
+    lastLatencyMs: 0,
+    avgLatencyMs: 0,
+    p95LatencyMs: null
+  };
+  latencySamples = [];
   constructor(options = {}) {
     this.endpoints = this.normalizeEndpoints(options.baseUrl, options.endpoints);
     this.authToken = options.authToken?.trim() ? options.authToken : void 0;
     this.timeoutMs = options.timeoutMs ?? 1e4;
     this.retries = options.retries ?? 2;
+    this.circuitThreshold = options.circuitBreakerThreshold ?? 3;
+    this.circuitRecoveryMs = options.circuitBreakerRecoveryMs ?? 3e4;
   }
+  // ── Public API (unchanged from v0.1.7) ────────────────────────────────────────
   async health() {
     return this.request("GET", "/v1/health");
   }
@@ -949,11 +999,7 @@ var StorageApiClient = class {
     return this.request("POST", "/v1/storage/get", { key });
   }
   async set(key, value, expiresAt) {
-    return this.request("POST", "/v1/storage/set", {
-      key,
-      value,
-      expiresAt
-    });
+    return this.request("POST", "/v1/storage/set", { key, value, expiresAt });
   }
   async delete(key) {
     return this.request("POST", "/v1/storage/delete", { key });
@@ -962,38 +1008,128 @@ var StorageApiClient = class {
     return this.request("POST", "/v1/storage/clear");
   }
   async sessionSave(id, appState, userId, ttlMs) {
-    return this.request("POST", "/v1/sessions/save", {
-      id,
-      appState,
-      userId,
-      ttlMs
-    });
+    return this.request(
+      "POST",
+      "/v1/sessions/save",
+      { id, appState, userId, ttlMs }
+    );
   }
   async sessionRestore(id) {
-    return this.request("POST", "/v1/sessions/restore", { id });
+    return this.request(
+      "POST",
+      "/v1/sessions/restore",
+      { id }
+    );
   }
   async sessionList(userId) {
-    return this.request("POST", "/v1/sessions/list", { userId });
+    return this.request(
+      "POST",
+      "/v1/sessions/list",
+      { userId }
+    );
   }
   async sessionDelete(id) {
-    return this.request("POST", "/v1/sessions/delete", { id });
+    return this.request(
+      "POST",
+      "/v1/sessions/delete",
+      { id }
+    );
   }
   async sessionPurgeExpired() {
     return this.request("POST", "/v1/sessions/purge");
   }
   async sessionTouch(id, ttlMs) {
-    return this.request("POST", "/v1/sessions/touch", {
-      id,
-      ttlMs
-    });
+    return this.request(
+      "POST",
+      "/v1/sessions/touch",
+      { id, ttlMs }
+    );
   }
+  // ── Observability ─────────────────────────────────────────────────────────────
+  /** Return a snapshot of accumulated request metrics. */
+  getMetrics() {
+    return { ...this._metrics };
+  }
+  /** Return the current circuit-breaker state for each known endpoint. */
+  getCircuitStates() {
+    const out = {};
+    for (const ep of this.endpoints) {
+      out[ep] = this.getCircuit(ep).state;
+    }
+    return out;
+  }
+  // ── Circuit-breaker internals ─────────────────────────────────────────────────
+  getCircuit(endpoint) {
+    let c = this.circuits.get(endpoint);
+    if (!c) {
+      c = { state: "closed", consecutiveFailures: 0, openedAt: 0, probeInFlight: false };
+      this.circuits.set(endpoint, c);
+    }
+    return c;
+  }
+  /**
+   * Returns true when a request to this endpoint is permitted.
+   * CLOSED → always true.
+   * OPEN → true only when the recovery window has elapsed AND no probe is
+   * already in-flight (prevents concurrent half-open probes).
+   */
+  canAttempt(endpoint) {
+    const c = this.getCircuit(endpoint);
+    if (c.state === "closed") return true;
+    if (Date.now() - c.openedAt >= this.circuitRecoveryMs && !c.probeInFlight) {
+      c.probeInFlight = true;
+      return true;
+    }
+    return false;
+  }
+  onSuccess(endpoint) {
+    const c = this.getCircuit(endpoint);
+    c.state = "closed";
+    c.consecutiveFailures = 0;
+    c.probeInFlight = false;
+  }
+  onFailure(endpoint) {
+    const c = this.getCircuit(endpoint);
+    c.consecutiveFailures += 1;
+    c.probeInFlight = false;
+    if (c.consecutiveFailures >= this.circuitThreshold || c.state === "open") {
+      if (c.state !== "open") this._metrics.circuitBreakerTrips += 1;
+      c.state = "open";
+      c.openedAt = Date.now();
+    }
+  }
+  // ── Metrics helpers ───────────────────────────────────────────────────────────
+  recordLatency(latencyMs, success) {
+    this._metrics.totalRequests += 1;
+    if (success) this._metrics.successRequests += 1;
+    else this._metrics.errorRequests += 1;
+    this._metrics.lastLatencyMs = latencyMs;
+    this.latencySamples.push(latencyMs);
+    if (this.latencySamples.length > 200) this.latencySamples.shift();
+    const n = this.latencySamples.length;
+    this._metrics.avgLatencyMs = this.latencySamples.reduce((a, b) => a + b, 0) / n;
+    if (n >= 10) {
+      const sorted = [...this.latencySamples].sort((a, b) => a - b);
+      this._metrics.p95LatencyMs = sorted[Math.floor(n * 0.95)] ?? null;
+    }
+  }
+  // ── Core request logic ────────────────────────────────────────────────────────
   async request(method, path, body) {
     const errors = [];
     for (const endpoint of this.endpoints) {
-      for (let attempt = 0; attempt <= this.retries; attempt += 1) {
+      if (!this.canAttempt(endpoint)) {
+        errors.push(
+          new StorageError(`Circuit breaker OPEN for ${endpoint} \u2014 request blocked`, { endpoint, path })
+        );
+        continue;
+      }
+      for (let attempt = 0; attempt <= this.retries; attempt++) {
         try {
-          return await this.fetchJson(endpoint, method, path, body);
+          const result = await this.fetchJson(endpoint, method, path, body);
+          this.onSuccess(endpoint);
+          return result;
         } catch (error) {
+          this.onFailure(endpoint);
           errors.push(error instanceof Error ? error : new Error(String(error)));
           const isLastAttempt = attempt >= this.retries;
           if (!isLastAttempt) {
@@ -1043,42 +1179,39 @@ var StorageApiClient = class {
       throw new StorageError("Storage API request failed", { endpoint, path }, error);
     }
   }
-  sendRequest(endpoint, path, method, headers, payload) {
-    return new Promise((resolve, reject) => {
-      const startMs = Date.now();
-      const transport = this.getTransport(endpoint);
-      const request = transport.request(
-        this.buildUrl(endpoint, path),
-        { method, headers, timeout: this.timeoutMs },
-        (response) => {
-          const chunks = [];
-          response.on("data", (chunk) => {
-            chunks.push(typeof chunk === "string" ? chunk : String(chunk));
-          });
-          response.on("error", reject);
-          response.on("end", () => {
-            resolve({
-              statusCode: response.statusCode ?? 0,
-              body: chunks.join(""),
-              latencyMs: Date.now() - startMs
-            });
-          });
-        }
-      );
-      request.on("timeout", () => {
-        request.destroy(new Error(`Request to ${this.buildUrl(endpoint, path)} timed out after ${this.timeoutMs} ms`));
+  /**
+   * Low-level HTTP transport using undici.
+   *
+   * ESM-safe: no `require()` calls. Undici is imported as a regular ESM
+   * dependency and works identically in both the CJS and ESM builds.
+   *
+   * Connection keep-alive, TLS, DNS, IPv4/IPv6 preference, and connection
+   * pooling are all handled transparently by undici's global dispatcher.
+   */
+  async sendRequest(endpoint, path, method, headers, payload) {
+    const url = this.buildUrl(endpoint, path);
+    const startMs = Date.now();
+    try {
+      const response = await undiciRequest(url, {
+        method,
+        headers,
+        body: payload,
+        // AbortSignal.timeout() requires Node.js >= 17.3 (we require >= 22)
+        signal: AbortSignal.timeout(this.timeoutMs)
       });
-      request.on("error", reject);
-      if (payload) request.write(payload);
-      request.end();
-    });
+      const body = await response.body.text();
+      const latencyMs = Date.now() - startMs;
+      const success = response.statusCode < 400;
+      this.recordLatency(latencyMs, success);
+      return { statusCode: response.statusCode, body, latencyMs };
+    } catch (err) {
+      const latencyMs = Date.now() - startMs;
+      this.recordLatency(latencyMs, false);
+      if (err instanceof StorageError) throw err;
+      throw new StorageError("Storage API transport error", { endpoint, path }, err);
+    }
   }
-  getTransport(endpoint) {
-    const moduleName = endpoint.startsWith("https://") ? "https" : "http";
-    const globalRequire = globalThis.require;
-    if (globalRequire) return globalRequire(moduleName);
-    return __require(moduleName);
-  }
+  // ── URL helpers ───────────────────────────────────────────────────────────────
   buildUrl(endpoint, path) {
     const normalizedEndpoint = endpoint.endsWith("/") ? endpoint.slice(0, -1) : endpoint;
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
@@ -1087,15 +1220,15 @@ var StorageApiClient = class {
   normalizeEndpoints(baseUrl, endpoints) {
     const values = /* @__PURE__ */ new Set();
     if (endpoints) {
-      for (const endpoint of endpoints) {
-        const normalized = endpoint.trim();
-        if (normalized) values.add(normalized);
+      for (const ep of endpoints) {
+        const n = ep.trim();
+        if (n) values.add(n);
       }
     }
     if (baseUrl) {
       for (const entry of baseUrl.split(",")) {
-        const normalized = entry.trim();
-        if (normalized) values.add(normalized);
+        const n = entry.trim();
+        if (n) values.add(n);
       }
     }
     if (values.size === 0) {
@@ -1182,7 +1315,7 @@ var LibSqlStorageAdapter = class {
           endpoint: this.activeEndpoint,
           bootstrapDurationMs: this.bootstrapDurationMs,
           fallbackMode: true,
-          failoverUsed: false,
+          failoverUsed: this.failoverUsed,
           connectionState: "fallback",
           error: this.lastError
         }
@@ -1254,7 +1387,6 @@ var LibSqlStorageAdapter = class {
         }
         this.pendingWrites.shift();
         replayed++;
-        this.retryCount++;
       } catch {
         stopped = true;
         break;
@@ -1353,7 +1485,12 @@ var LibSqlStorageAdapter = class {
     try {
       await this.client.clear();
     } catch (err) {
-      throw new StorageError("Storage API clear failed", {}, err);
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.logger?.warn("Storage remote clear failed \u2014 queued for sync", {
+        tag: "STORAGE",
+        error: this.lastError
+      });
+      this.enqueuePendingWrite({ op: "clear", enqueuedAt: Date.now() });
     }
   }
   async has(key) {
@@ -1714,27 +1851,102 @@ import pRetry from "p-retry";
 
 // src/cookies/index.ts
 import { CookieJar, Cookie } from "tough-cookie";
+function normalizeCookies(raw) {
+  const diagnostics = [];
+  const seen = /* @__PURE__ */ new Map();
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (!entry || typeof entry !== "object") {
+      diagnostics.push(`Cookie[${i}]: skipped \u2014 not an object`);
+      continue;
+    }
+    const c = entry;
+    const rawKey = (c.key ?? c.name ?? "").trim();
+    if (!rawKey) {
+      diagnostics.push(`Cookie[${i}]: skipped \u2014 no "key" or "name" field`);
+      continue;
+    }
+    if (c.name && !c.key) {
+      diagnostics.push(`Cookie[${i}] "${rawKey}": normalized "name" \u2192 "key"`);
+    }
+    if (c.value === void 0 || c.value === null) {
+      diagnostics.push(`Cookie[${i}] "${rawKey}": skipped \u2014 no "value" field`);
+      continue;
+    }
+    const value = String(c.value);
+    const domain = (c.domain ?? ".facebook.com").trim() || ".facebook.com";
+    const path = (c.path ?? "/").trim() || "/";
+    let expires;
+    if (typeof c.expirationDate === "number") {
+      expires = Math.floor(c.expirationDate);
+      if (c.expires !== void 0) {
+        diagnostics.push(`Cookie "${rawKey}": "expirationDate" took precedence over "expires"`);
+      }
+    } else if (c.expires !== void 0) {
+      expires = c.expires;
+    }
+    if (typeof expires === "number" && expires > 0 && expires * 1e3 < Date.now()) {
+      diagnostics.push(
+        `Cookie "${rawKey}": expires is in the past (${new Date(expires * 1e3).toISOString()})`
+      );
+    }
+    const normalized = {
+      key: rawKey,
+      value,
+      domain,
+      path,
+      secure: typeof c.secure === "boolean" ? c.secure : false,
+      httpOnly: typeof c.httpOnly === "boolean" ? c.httpOnly : false,
+      hostOnly: typeof c.hostOnly === "boolean" ? c.hostOnly : false,
+      ...expires !== void 0 ? { expires } : {},
+      ...c.sameSite ? { sameSite: c.sameSite } : {},
+      ...typeof c.session === "boolean" ? { session: c.session } : {},
+      ...c.priority ? { priority: c.priority } : {},
+      ...c.sourceScheme ? { sourceScheme: c.sourceScheme } : {},
+      ...c.sourcePort !== void 0 ? { sourcePort: c.sourcePort } : {},
+      ...c.creation ? { creation: c.creation } : {},
+      ...c.lastAccessed ? { lastAccessed: c.lastAccessed } : {}
+    };
+    const dedupKey = `${rawKey}:${domain}`;
+    if (seen.has(dedupKey)) {
+      diagnostics.push(`Cookie "${rawKey}" (${domain}): duplicate removed \u2014 keeping last entry`);
+    }
+    seen.set(dedupKey, normalized);
+  }
+  return [Array.from(seen.values()), diagnostics];
+}
 function validateAppState(appState) {
   if (!Array.isArray(appState) || appState.length === 0) {
     throw new InvalidAppStateError("AppState must be a non-empty array of cookie objects");
   }
-  const cookies = appState;
-  const keys = new Set(cookies.map((c) => c.key));
+  const [cookies, normDiagnostics] = normalizeCookies(appState);
+  if (cookies.length === 0) {
+    throw new InvalidAppStateError(
+      "AppState contains no valid cookies after normalization \u2014 all entries were malformed or had no value",
+      { normalizationDiagnostics: normDiagnostics }
+    );
+  }
+  const keySet = new Set(cookies.map((c) => c.key));
   for (const required of REQUIRED_COOKIES) {
-    if (!keys.has(required)) {
+    if (!keySet.has(required)) {
       throw new InvalidAppStateError(
         `AppState is missing required cookie: ${required}`,
-        { missingCookie: required, presentCookies: [...keys] }
+        { missingCookie: required, presentCookies: [...keySet], normalizationDiagnostics: normDiagnostics }
       );
     }
   }
+  const expiredRequired = [];
   for (const cookie of cookies) {
-    if (typeof cookie.key !== "string" || !cookie.key) {
-      throw new InvalidAppStateError('Each AppState cookie must have a string "key" field');
+    if (!REQUIRED_COOKIES.includes(cookie.key)) continue;
+    if (typeof cookie.expires === "number" && cookie.expires > 0 && cookie.expires * 1e3 < Date.now()) {
+      expiredRequired.push(cookie.key);
     }
-    if (typeof cookie.value !== "string") {
-      throw new InvalidAppStateError(`AppState cookie "${cookie.key}" must have a string "value" field`);
-    }
+  }
+  if (expiredRequired.length > 0) {
+    throw new InvalidAppStateError(
+      `AppState has expired required cookies: ${expiredRequired.join(", ")} \u2014 export a fresh AppState from your browser`,
+      { expiredCookies: expiredRequired, normalizationDiagnostics: normDiagnostics }
+    );
   }
   return cookies;
 }
@@ -1744,12 +1956,17 @@ function hydrateJar(appState) {
     const domain = entry.domain.startsWith(".") ? entry.domain.slice(1) : entry.domain;
     const url = `https://${domain}${entry.path ?? "/"}`;
     let expires;
-    if (entry.expires === "Infinity" || entry.expires === void 0) {
+    if (entry.session) {
+      expires = void 0;
+    } else if (entry.expires === "Infinity" || entry.expires === void 0) {
       expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3);
     } else if (typeof entry.expires === "number") {
       expires = new Date(entry.expires * 1e3);
     } else if (typeof entry.expires === "string") {
       expires = new Date(entry.expires);
+    }
+    if (expires instanceof Date && isNaN(expires.getTime())) {
+      expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3);
     }
     const cookie = new Cookie({
       key: entry.key,
@@ -1759,7 +1976,8 @@ function hydrateJar(appState) {
       secure: entry.secure ?? false,
       httpOnly: entry.httpOnly ?? false,
       hostOnly: entry.hostOnly ?? false,
-      expires: expires instanceof Date && isNaN(expires.getTime()) ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3) : expires ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3),
+      sameSite: entry.sameSite ?? "no_restriction",
+      expires: expires ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3),
       creation: entry.creation ? new Date(entry.creation) : /* @__PURE__ */ new Date(),
       lastAccessed: entry.lastAccessed ? new Date(entry.lastAccessed) : /* @__PURE__ */ new Date()
     });
@@ -6473,6 +6691,7 @@ export {
   SessionsModule,
   StealthManager,
   StickersModule,
+  StorageCircuitOpenError,
   StorageError,
   ThreadListResponseSchema,
   ThreadNodeSchema,
@@ -6519,6 +6738,7 @@ export {
   makeMultipartRequestSpec,
   maskProxyUrl,
   normalizeCacheOptions,
+  normalizeCookies,
   nsKey,
   parseFriendListResponse,
   parseLoginResponse,

@@ -1,5 +1,4 @@
 import type { StorageAdapter } from './interface.js';
-import { StorageError } from '../errors/index.js';
 import { MemoryStorageAdapter } from './memory.js';
 import {
   STORAGE_API_URL,
@@ -176,7 +175,7 @@ export class LibSqlStorageAdapter implements StorageAdapter {
           endpoint: this.activeEndpoint,
           bootstrapDurationMs: this.bootstrapDurationMs,
           fallbackMode: true,
-          failoverUsed: false,
+          failoverUsed: this.failoverUsed,
           connectionState: 'fallback',
           error: this.lastError,
         },
@@ -270,7 +269,6 @@ export class LibSqlStorageAdapter implements StorageAdapter {
         // Write succeeded — remove from queue head, preserving tail ordering.
         this.pendingWrites.shift();
         replayed++;
-        this.retryCount++;
       } catch {
         // Write failed — stop here to avoid reordering subsequent operations.
         stopped = true;
@@ -398,7 +396,12 @@ export class LibSqlStorageAdapter implements StorageAdapter {
     try {
       await this.client.clear();
     } catch (err) {
-      throw new StorageError('Storage API clear failed', {}, err);
+      this.lastError = err instanceof Error ? err.message : String(err);
+      this.logger?.warn('Storage remote clear failed — queued for sync', {
+        tag: 'STORAGE',
+        error: this.lastError,
+      });
+      this.enqueuePendingWrite({ op: 'clear', enqueuedAt: Date.now() });
     }
   }
 

@@ -1,2 +1,5 @@
 - [Storage failover design](storage-failover.md) — LibSqlStorageAdapter uses in-memory fallback + FIFO pending-write queue; close() must never call clear(); isSyncing guards concurrent replays.
 - [Pino custom levels](pino-custom-levels.md) — Use `pino.Logger<string, boolean>` alias and cast the return of pino() to avoid TypeScript generic conflict when adding customLevels.
+- [Logger child bindings dedup](logger-child-bindings.md) — wrap() must track accumulated bindings as plain object and always call base.child(merged); never p.child(x) on an already-bound pino child.
+- [undici ESM transport fix](undici-esm-transport-fix.md) — require('http'/'https') breaks in ESM builds; always use undici.request(). vi.mock('undici') needs vi.hoisted() + Agent/ProxyAgent stubs.
+- [Circuit breaker integration test pattern](circuit-breaker-integration-test-pattern.md) — After bootstrap failure the circuit opens; spy on adapter.client.health directly in reconnect/replay tests instead of mocking undici.
